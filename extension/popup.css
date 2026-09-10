@@ -1,0 +1,33 @@
+/* SPDX-License-Identifier: MIT */
+:root { color-scheme: dark; font: 14px/1.5 system-ui, sans-serif; color: #e9f5f3; background: #101d25; }
+* { box-sizing: border-box; }
+body { width: 358px; margin: 0; }
+header { display: flex; gap: 13px; align-items: center; padding: 22px 22px 18px; background: linear-gradient(130deg,#153843,#13242d); border-bottom: 1px solid #28414c; }
+h1 { font-size: 21px; margin: 0; letter-spacing: -.5px; }
+header p { color: #a6c6c9; margin: 1px 0 0; font-size: 12px; }
+main { padding: 20px 22px 12px; }
+.eyebrow { color: #72d9ce; font-size: 10px; letter-spacing: 1.8px; font-weight: 750; }
+h2 { margin: 8px 0; font-size: 15px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.source p, .hint { font-size: 12px; color: #b3c7cc; }
+.source { margin-bottom: 20px; }
+label { display: block; font-weight: 550; margin: 10px 0 6px; }
+small { font-size: 11px; font-weight: 400; color: #a6bfc4; float: right; }
+select { appearance: auto; width: 100%; border: 1px solid #49626c; padding: 9px; background: #182b35; border-radius: 9px; color: inherit; font: inherit; }
+button { width: 100%; cursor: pointer; border-radius: 10px; padding: 11px; font: inherit; font-weight: 650; }
+.primary { background: #82e2d3; color: #082e33; margin-top: 17px; border: 1px solid #a2eee4; box-shadow: 0 3px 0 #266d6c; }
+.primary span { float: right; }
+.secondary { background: transparent; border: 1px solid #3c5661; color: #d8e7eb; margin-top: 10px; }
+button:hover:not(:disabled) { filter: brightness(1.12); }
+button:disabled { opacity: .55; cursor: wait; }
+:focus-visible { outline: 3px solid #ffbd75; outline-offset: 3px; }
+#status { font-size: 12px; min-height: 18px; margin: 14px 0; color: #9de8db; overflow-wrap: anywhere; }
+#status.error { color: #ffc396; }
+details { border-top: 1px solid #30444f; padding-top: 12px; }
+summary { cursor: pointer; font-weight: 600; }
+.toggle { display: flex; gap: 9px; align-items: center; font-size: 12px; font-weight: 400; margin: 14px 0; }
+input { accent-color: #82e2d3; width: 16px; height: 16px; flex: none; }
+a { display: inline-block; color: #97e3dc; margin: 14px 0 6px; font-size: 12px; }
+footer { padding: 10px 22px 16px; font-size: 10px; color: #88a6ae; }
+body.help { width: auto; max-width: 760px; margin: 35px auto; padding: 0 22px; }
+.help h2 { display: block; font-size: 19px; }
+code { overflow-wrap: anywhere; background: #20333b; padding: 2px 5px; border-radius: 4px; }

@@ -1,0 +1,10 @@
+<!-- SPDX-License-Identifier: MIT; original Frame Ferry artwork. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+ <defs><linearGradient id="sea" x2="1" y2="1"><stop stop-color="#123c49"/><stop offset="1" stop-color="#101d25"/></linearGradient></defs>
+ <rect x="2" y="2" width="124" height="124" rx="29" fill="url(#sea)"/>
+ <path d="M24 51V31a7 7 0 0 1 7-7h38" fill="none" stroke="#8ce6d7" stroke-width="9" stroke-linecap="round"/>
+ <path d="M104 77v20a7 7 0 0 1-7 7H59" fill="none" stroke="#ffba75" stroke-width="9" stroke-linecap="round"/>
+ <path d="M29 84c14 0 12-40 31-40h32" fill="none" stroke="#8ce6d7" stroke-width="7" stroke-linecap="round"/>
+ <path d="m79 32 16 12-16 12" fill="none" stroke="#8ce6d7" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+ <path d="M46 55v32l28-16Z" fill="#ffba75" stroke="#101d25" stroke-width="4" stroke-linejoin="round"/>
+</svg>

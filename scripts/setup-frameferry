@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Install or remove Frame Ferry's isolated user files without touching normal mpv settings."""
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+BROWSERS = {'helium': 'net.imput.helium', 'chromium': 'chromium', 'chrome': 'google-chrome',
+            'brave': 'BraveSoftware/Brave-Browser'}
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def extension_id():
+    key = json.loads((ROOT / 'extension/manifest.json').read_text())['key']
+    value = hashlib.sha256(base64.b64decode(key)).hexdigest()[:32]
+    return ''.join(chr(ord('a') + int(char, 16)) for char in value)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--browser', choices=BROWSERS, default='helium')
+    parser.add_argument('--browser-data-dir', type=Path, help='Custom Chromium user-data root, not a profile subdirectory')
+    parser.add_argument('--uninstall', action='store_true', help='Remove unchanged managed files and restore originals')
+    args = parser.parse_args()
+    home = Path.home()
+    config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
+    data = Path(os.environ.get('XDG_DATA_HOME', home / '.local/share')) / 'frameferry'
+    state = Path(os.environ.get('XDG_STATE_HOME', home / '.local/state')) / 'frameferry'
+    if not all(path.is_absolute() for path in (config, data, state)):
+        parser.error('XDG config, data, and state directories must be absolute paths.')
+    if args.browser_data_dir:
+        args.browser_data_dir = args.browser_data_dir.expanduser().resolve()
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ledger = state / 'installation.json'
+    records = json.loads(ledger.read_text()) if ledger.exists() else {}
+    if args.uninstall:
+        kept = {}
+        for name, record in records.items():
+            path = Path(name)
+            if path.is_file() and digest(path) == record['hash']:
+                path.unlink()
+                if record['backup']:
+                    shutil.copy2(record['backup'], path, follow_symlinks=False)
+                print(f'Removed managed version: {path}')
+            elif path.exists() or path.is_symlink():
+                kept[name] = record
+                print(f'Kept changed file: {path}')
+        ledger.write_text(json.dumps(kept, indent=2) + '\n')
+        print('Remove Frame Ferry from the browser Extensions page. Component downloads and private logs remain; see README.')
+        return 0
+    if sys.version_info < (3, 10) or sys.platform != 'linux':
+        parser.error('Native Linux with Python 3.10+ is required.')
+    missing = [name for name in ('mpv', 'yt-dlp', 'deno') if not shutil.which(name)]
+    if missing:
+        parser.error('Install these tools first: ' + ', '.join(missing))
+    def install_bytes(content, target, executable=False):
+        name = str(target)
+        previous = records.get(name)
+        if target.exists() and previous and digest(target) != previous['hash']:
+            print(f'Kept user changes: {target}')
+            return
+        backup = previous['backup'] if previous else None
+        if (target.exists() or target.is_symlink()) and not previous:
+            backup_dir = state / 'backups'
+            backup_dir.mkdir(exist_ok=True)
+            backup = str(backup_dir / (str(time.time_ns()) + '-' + target.name))
+            shutil.copy2(target, backup, follow_symlinks=False)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = target.with_name(target.name + '.new')
+        temp.write_bytes(content)
+        temp.chmod(0o755 if executable else 0o644)
+        temp.replace(target)
+        records[name] = {'hash': hashlib.sha256(content).hexdigest(), 'backup': backup}
+        ledger.write_text(json.dumps(records, indent=2) + '\n')
+        ledger.chmod(0o600)
+    player = config / 'frameferry/mpv'
+    (player / 'screenshots').mkdir(parents=True, exist_ok=True)
+    for source in (ROOT / 'config/mpv').rglob('*'):
+        if source.is_file():
+            install_bytes(source.read_bytes(), player / source.relative_to(ROOT / 'config/mpv'))
+    install_bytes(('ytdl_path=' + str(data / 'bin/yt-dlp-mpv') + '\n').encode(),
+                  player / 'script-opts/ytdl_hook.conf')
+    for name in ('frameferry-native', 'yt-dlp-mpv', 'yt-dlp-update-background'):
+        install_bytes((ROOT / 'scripts' / name).read_bytes(), data / 'bin' / name, True)
+    for source in (ROOT / 'extension').rglob('*'):
+        if source.is_file():
+            install_bytes(source.read_bytes(), data / 'extension' / source.relative_to(ROOT / 'extension'))
+    for name in ('LICENSE', 'THIRD_PARTY.md', 'LICENSES/MPL-2.0.txt'):
+        install_bytes((ROOT / name).read_bytes(), data / name)
+    browser = args.browser_data_dir or config / BROWSERS[args.browser]
+    manifest = {'name': 'frameferry', 'description': 'Frame Ferry playback handoff', 'type': 'stdio',
+                'path': str(data / 'bin/frameferry-native'),
+                'allowed_origins': ['chrome-extension://' + extension_id() + '/']}
+    install_bytes((json.dumps(manifest, indent=2) + '\n').encode(), browser / 'NativeMessagingHosts/frameferry.json')
+    print(f'Player configuration: {player}')
+    print(f'Load unpacked in your browser: {data / "extension"}')
+    print('Reload the extension after updates. Your normal mpv configuration was not changed.')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

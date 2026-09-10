@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""YouTube cookies and bounded extraction for mpv's built-in yt-dlp hook."""
+
+import argparse
+import ctypes
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+from urllib.parse import urlparse
+
+
+YOUTUBE_HOSTS = {"youtube.com", "youtube-nocookie.com", "youtu.be"}
+EXTRACTION_TIMEOUT = 20
+JSON_FLAGS = {"-J", "--dump-single-json", "-j", "--dump-json"}
+UPDATE_SCRIPT = Path(__file__).resolve().with_name("yt-dlp-update-background")
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "frameferry"
+TOKEN_PROVIDER = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "frameferry/bgutil"
+UNSUPPORTED_POST_LIVE_MARKER = b"yt-dlp-mpv: YouTube post-live DASH fragments lack reliable timing\n"
+
+
+def is_youtube_url(value):
+    try:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        return parsed.scheme in {"http", "https"} and (
+            host in YOUTUBE_HOSTS or any(host.endswith(f".{domain}") for domain in YOUTUBE_HOSTS))
+    except ValueError:
+        return False
+
+
+def with_quality_fallback(args, cookies=False, ceiling=1080, token=False):
+    """Change transport without raising the selected resolution ceiling."""
+    def selection(height, audio_only=False):
+        if token:
+            return "bestaudio/best" if audio_only else (
+                f"bestvideo[height<=?{height}]+bestaudio/best[height<=?{height}]")
+        return "bestaudio[protocol=m3u8_native]/bestaudio/best" if audio_only else (
+            f"best[height<=?{height}][protocol=m3u8_native]/"
+            f"bestvideo[height<=?{height}][protocol=m3u8_native]+bestaudio[protocol=m3u8_native]")
+
+    out = list(args)
+    separator = out.index("--") if "--" in out else len(out)
+    changed = False
+    for i, arg in enumerate(out[:separator]):
+        if arg in ("--format", "-f") and i + 1 < separator:
+            expression, index, prefix = out[i + 1], i + 1, ""
+        elif arg.startswith("--format="):
+            expression, index, prefix = arg.split("=", 1)[1], i, "--format="
+        elif arg.startswith("-f") and not arg.startswith("--") and len(arg) > 2:
+            expression, index, prefix = arg[2:], i, "-f"
+        else:
+            continue
+        heights = re.findall(r"height<=\??(\d+)", expression)
+        height = min(ceiling, *map(int, heights)) if heights else ceiling
+        fallback = selection(height, expression.startswith("bestaudio"))
+        out[index] = prefix + fallback
+        changed = True
+    client = "web_safari" if cookies else "visionos"
+    client_args = "player_client=mweb;use_ad_playback_context=true" if token else f"player_client={client}"
+    extra = ["--extractor-args", f"youtube:{client_args}"]
+    if not changed:
+        extra += ["--format", selection(ceiling)]
+    out[separator:separator] = extra
+    return out
+
+
+def below_selected_quality(info, args):
+    separator = args.index("--") if "--" in args else len(args)
+    heights = re.findall(r"height<=\??(\d+)", " ".join(args[:separator]))
+    if not heights or not info.get("height") or not info.get("width"):
+        return False
+    # YouTube's 2160p tier can be 3840x1920 for a 2:1 source.
+    tier = max(info["height"], info["width"] * 9 / 16)
+    return tier < min(map(int, heights))
+
+
+def wait_until_available(info, deadline):
+    formats = info.get("requested_formats") or [info]
+    available = max((fmt.get("available_at") or 0) for fmt in formats)
+    delay = max(0, available - time.time())
+    if delay > max(0, deadline - time.monotonic()):
+        return False
+    if delay:
+        sys.stderr.write(f"yt-dlp-mpv: waiting {delay:.1f}s for YouTube media availability\n")
+        time.sleep(delay)
+    return True
+
+
+def has_post_live_fragments_without_durations(info):
+    if not isinstance(info, dict) or info.get("live_status") != "post_live":
+        return False
+    # Unselected DASH formats must not block a valid selected HLS stream.
+    for fmt in info.get("requested_formats") or [info]:
+        if fmt.get("protocol") != "http_dash_segments":
+            continue
+        fragments = fmt.get("fragments") or []
+        # The first DASH fragment can be an initialization segment.
+        if any(fragment.get("duration") is None for fragment in fragments[1:]):
+            return True
+    return False
+
+
+def extractor_worker(parent_pid, command):
+    if os.getpgrp() != os.getpid():
+        return 2
+
+    def stop_group(*_args):
+        os.killpg(os.getpid(), signal.SIGKILL)
+
+    # A guardian survives mpv's SIGKILL long enough to stop all extractor children.
+    signal.signal(signal.SIGTERM, stop_group)
+    if ctypes.CDLL(None).prctl(1, signal.SIGTERM, 0, 0, 0) != 0 or os.getppid() != parent_pid:
+        stop_group()
+    return subprocess.call(command)
+
+
+def run_captured(command, timeout=None):
+    worker = [sys.executable, str(Path(__file__).resolve()), "--extractor-worker", str(os.getpid()), *command]
+    process = subprocess.Popen(worker, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               start_new_session=True)
+
+    def cancel(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    previous = signal.signal(signal.SIGTERM, cancel)
+    try:
+        try:
+            stdout, stderr = process.communicate(timeout=EXTRACTION_TIMEOUT if timeout is None else timeout)
+            return process.returncode, stdout, stderr
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+            return 1, b"", stderr + b"yt-dlp-mpv: extraction timed out\n"
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        signal.signal(signal.SIGTERM, previous)
+
+
+def start_background_update(ytdlp):
+    if not UPDATE_SCRIPT.is_file():
+        return
+    try:
+        if float((STATE_DIR / "yt-dlp-update.lock").read_text()) > time.time():
+            return
+    except (OSError, ValueError):
+        pass
+    try:
+        subprocess.Popen(
+            [sys.executable, str(UPDATE_SCRIPT), ytdlp,
+             str(STATE_DIR / "yt-dlp-update.lock"), str(STATE_DIR / "yt-dlp-update.log")],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True, close_fds=True)
+    except OSError:
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--frameferry-route", default="primary",
+                        choices=["primary", "authenticated", "token", "hls", "retained", "fallback"])
+    parser.add_argument("--frameferry-timeout", type=float, default=EXTRACTION_TIMEOUT)
+    parser.add_argument("--frameferry-candidate")
+    parser.add_argument("--frameferry-update", choices=["yes", "no"], default="no")
+    options, args = parser.parse_known_args(sys.argv[1:])
+    route = options.frameferry_route
+    timeout = max(0.1, min(EXTRACTION_TIMEOUT, options.frameferry_timeout))
+    if route == "retained":
+        if not options.frameferry_candidate:
+            parser.error("retained playback requires a candidate file")
+        deadline = time.monotonic() + timeout
+        try:
+            # mpv holds the unlinked file open for this load only.
+            for fd in Path(f"/proc/{os.getppid()}/fd").iterdir():
+                try:
+                    target = os.readlink(fd)
+                except FileNotFoundError:
+                    continue
+                if target == options.frameferry_candidate + " (deleted)":
+                    stdout = fd.read_bytes()
+                    break
+            else:
+                raise ValueError("retained metadata is no longer available")
+            info = json.loads(stdout)
+            if not isinstance(info, dict):
+                raise ValueError("expected video metadata")
+            if not wait_until_available(info, deadline):
+                raise ValueError("media availability exceeds this route's budget")
+        except (OSError, ValueError) as error:
+            sys.stderr.write(f"yt-dlp-mpv: retained stream unavailable: {error}\n")
+            return 1
+        sys.stdout.buffer.write(stdout)
+        return 0
+
+    ytdlp = shutil.which("yt-dlp")
+    if ytdlp is None:
+        sys.stderr.write("yt-dlp-mpv: yt-dlp was not found in PATH\n")
+        return 127
+    youtube = any(is_youtube_url(arg) for arg in args)
+    command = [ytdlp, "--ignore-config"]
+    if youtube and options.frameferry_update == "yes":
+        start_background_update(ytdlp)
+
+    if youtube and any(arg in JSON_FLAGS for arg in args):
+        command += ["--socket-timeout", "5", "--retries", "0", "--extractor-retries", "0"]
+        separator = args.index("--") if "--" in args else len(args)
+        cookies = any(
+            arg in {"--cookies", "--cookies-from-browser"}
+            or arg.startswith(("--cookies=", "--cookies-from-browser=")) for arg in args[:separator])
+        provider_available = (TOKEN_PROVIDER / "server/build/generate_once.js").is_file()
+        uses_token = route == "token" or (route == "fallback" and cookies and provider_available)
+        if uses_token:
+            if not provider_available:
+                sys.stderr.write("yt-dlp-mpv: token provider not installed\n")
+                return 1
+            command += ["--plugin-dirs", str(TOKEN_PROVIDER),
+                        "--extractor-args", f"youtubepot-bgutilscript:server_home={TOKEN_PROVIDER}/server"]
+        if route == "token":
+            args[separator:separator] = ["--extractor-args", "youtube:player_client=mweb"]
+        elif route in {"hls", "fallback"}:
+            args = with_quality_fallback(args, cookies=cookies, token=uses_token,
+                                         ceiling=2160 if route == "hls" else 1080)
+        sys.stderr.write(f"yt-dlp-mpv: playback route {route}\n")
+        deadline = time.monotonic() + timeout
+        status, stdout, stderr = run_captured(command + args, timeout)
+        if status == 0:
+            try:
+                info = json.loads(stdout)
+                if has_post_live_fragments_without_durations(info):
+                    status, stdout, stderr = 1, b"", stderr + UNSUPPORTED_POST_LIVE_MARKER
+                elif cookies and route in {"primary", "authenticated"} and below_selected_quality(info, args):
+                    status, stderr = 1, stderr + b"yt-dlp-mpv: limited authenticated formats; try token route\n"
+                elif not wait_until_available(info, deadline):
+                    status, stdout, stderr = 1, b"", stderr + b"yt-dlp-mpv: media availability exceeds this route's budget\n"
+            except (ValueError, UnicodeDecodeError):
+                pass
+        sys.stdout.buffer.write(stdout)
+        sys.stderr.buffer.write(stderr)
+        return status
+
+    os.execv(ytdlp, command + args)
+    return 127
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["--extractor-worker"]:
+        raise SystemExit(extractor_worker(int(sys.argv[2]), sys.argv[3:]))
+    raise SystemExit(main())

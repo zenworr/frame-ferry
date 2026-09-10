@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Frame Ferry — help</title><link rel="stylesheet" href="popup.css"></head><body class="help">
+<h1>Frame Ferry</h1>
+<h2>Setup</h2><p>Follow the project README to install the player components and register the native host for your browser. On the browser's Extensions page, enable Developer mode, select Load unpacked, and use the extension directory printed by the installer, normally <code>~/.local/share/frameferry/extension</code>.</p>
+<p>Pin Frame Ferry or use <strong>Alt+Shift+M</strong> to open it. After updates, rerun installation and reload the extension. There are no store updates.</p>
+<h2>Playback</h2><p>Continue reads the main video's position when clicked. If it cannot read a position, playback uses the URL or saved history. Play from the beginning requests zero. Live/DVR position transfer is not supported.</p>
+<p>Browser pausing is optional and happens only after mpv confirms playback. Changed or inaccessible pages may stay playing. The resolution setting is a limit, not a guarantee; mpv shows the actual stream resolution.</p>
+<h2>Privacy</h2><p>The extension stores settings locally, has no telemetry, and never reads cookies. It reads the selected page after a user action and sends a playback request to the local helper. The player contacts media providers and SponsorBlock. Logs can contain sensitive URLs; review them before sharing.</p>
+<p>Browser-cookie access and background yt-dlp updates are off by default. They can be enabled in the local player settings described in the user guide.</p>
+<h2>Troubleshooting</h2><p>Use Check native host in the popup. If it fails, reinstall for the correct browser and reload the extension. Run <code>python3 scripts/doctor --browser helium</code>, selecting your browser, for local checks. Playback failures may require an updated yt-dlp or account access; a host check does not test provider access.</p>
+</body></html>

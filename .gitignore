@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.backup.*
+*.log
+.cache/
+.env
+.env.*
+node_modules/
+cookies*.txt
+
+# Local artifacts and installed components are not release source.
+/bin/
+/dist/
+/validation-local/
+config/mpv/scripts/uosc/
+config/mpv/scripts/thumbfast.lua
+config/mpv/scripts/sponsorblock.lua
+config/mpv/scripts/sponsorblock_shared/

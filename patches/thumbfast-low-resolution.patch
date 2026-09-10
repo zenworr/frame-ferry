@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Frame Ferry contributors
+# Applies to po5/thumbfast 0f711de3138c9bd6718209d819ac54022c23ded2.
+--- a/thumbfast.lua
++++ b/thumbfast.lua
+@@ -450,8 +450,26 @@
+ 
+     local open_filename = properties["stream-open-filename"]
+     local ytdl = open_filename and properties["demuxer-via-network"] and path ~= open_filename
++    local preview = false
+     if ytdl then
+         path = open_filename
++        -- Reuse extraction data instead of seeking the full 4K stream for previews.
++        local result = mp.get_property_native("user-data/mpv/ytdl/json-subprocess-result")
++        local data = result and mp.utils.parse_json(result.stdout or "")
++        if data and data.extractor_key == "Youtube" and not data.is_live
++            and #mp.get_property_native("vf", {}) == 0
++            and mp.get_property("video-crop", "") == "" then
++            local height = 0
++            local protocol = ((data.requested_formats or {})[1] or data).protocol
++            for _, format in ipairs(data.formats or {}) do
++                if format.protocol == protocol and format.url
++                    and (format.available_at or 0) <= os.time()
++                    and format.dynamic_range == data.dynamic_range
++                    and (format.height or 0) > height and format.height <= 360 then
++                    path, height, preview = format.url, format.height, true
++                end
++            end
++        end
+     end
+ 
+     remove_thumbnail_files()
+@@ -462,7 +480,7 @@
+     local args = {
+         mpv_path, "--no-config", "--msg-level=all=no", "--idle", "--pause", "--keep-open=always", "--really-quiet", "--no-terminal",
+         "--load-scripts=no", "--osc=no", "--ytdl=no", "--load-stats-overlay=no", "--load-osd-console=no", "--load-auto-profiles=no",
+-        "--edition="..(properties["edition"] or "auto"), "--vid="..(vid or "auto"), "--no-sub", "--no-audio",
++        "--edition="..(properties["edition"] or "auto"), "--vid="..(preview and "auto" or vid or "auto"), "--no-sub", "--no-audio",
+         "--start="..time, allow_fast_seek and "--hr-seek=no" or "--hr-seek=yes",
+         "--ytdl-format=worst", "--demuxer-readahead-secs=0", "--demuxer-max-bytes=128KiB",
+         "--vd-lavc-skiploopfilter=all", "--vd-lavc-software-fallback=1", "--vd-lavc-fast", "--vd-lavc-threads=2", "--hwdec="..(options.hwdec and "auto" or "no"),

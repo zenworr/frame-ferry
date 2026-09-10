@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Frame Ferry",
+  "version": "1.0.0",
+  "description": "Continue a video in mpv. Choose the position, resolution limit, and when the browser pauses.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq+N7TNl1YmWH3bDuusg80EPaVtczKpNSY3sZdYAZ/dhk/4t0oG1+77i8pXeoAtmJJXSdpdgWcnvuVmdSFFCJkwpVWjxCqYR5xtDQtuWkBEGanXTuiMDN8Sr56CdhkSyvGNlanIfd3H7Zi4BeV+BOdzTRennUntbWSp2XlVX/PWdsJ8N1USTquf9upIrtzAtCNr2VveLD8XIT6c3jOuW8I7ozsdb6VmM6W8sW4NUMlGgDCk2g1xD9nYFCCAkFZ+YfepppfUix0eZVUKP6iyr6ctsULK4JCo1npVZAWl9EwgwXHCizaa8TOFhncahFb2NnTcPnu5q+suXKjcnLAMEDoQIDAQAB",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "nativeMessaging",
+    "storage",
+    "contextMenus"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {"default": "Alt+Shift+M"},
+      "description": "Open Frame Ferry"
+    }
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Frame Ferry — send this video to mpv",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}

@@ -1,0 +1,16 @@
+name: Checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    container: archlinux:base
+    steps:
+      - name: Install test tools
+        run: pacman -Syu --noconfirm git make python lua mpv patch nodejs diffutils
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: make check
+      - run: make test-slow

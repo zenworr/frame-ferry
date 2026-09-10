@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Frame Ferry</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+<header><img src="icons/icon.svg" width="48" height="48" alt=""><div><h1>Frame Ferry</h1><p>Your video. A better seat.</p></div></header>
+<main>
+<section class="source"><span class="eyebrow">BROWSER → MPV</span><h2 id="page-title">Finding the current tab…</h2><p id="position">Checking playback position…</p></section>
+<label for="quality">Maximum resolution <small>this handoff</small></label>
+<select id="quality"><option value="0">Player default</option><option value="2160">2160p · 4K</option><option value="1440">1440p</option><option value="1080">1080p · HD</option><option value="720">720p</option><option value="480">480p</option></select>
+<button id="send" class="primary" disabled>Continue in mpv <span aria-hidden="true">↗</span></button>
+<button id="alternate" class="secondary" disabled>Play from the beginning</button>
+<p id="status" role="status" aria-live="polite"></p>
+<details><summary>Defaults &amp; settings</summary>
+<label class="toggle"><input id="resume" type="checkbox">Continue from the current position</label>
+<label class="toggle"><input id="pause" type="checkbox">Pause browser videos when mpv is ready</label>
+<label class="toggle"><input id="fullscreen" type="checkbox">Open mpv fullscreen</label>
+<label for="default-quality">Default maximum resolution</label>
+<select id="default-quality"><option value="0">Player default</option><option value="2160">2160p · 4K</option><option value="1440">1440p</option><option value="1080">1080p · HD</option><option value="720">720p</option><option value="480">480p</option></select>
+<p class="hint">Settings stay in this browser. A resolution limit is not a promise that the stream is available. Live/DVR position transfer is not supported.</p>
+<button id="check" class="secondary">Check native host</button>
+<a href="help.html" target="_blank">Setup, privacy &amp; troubleshooting ↗</a>
+</details>
+</main>
+<footer>No tracking. No account. Just the handoff.</footer>
+<script type="module" src="popup.js"></script>
+</body></html>

@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Update the standalone yt-dlp binary without delaying mpv startup."""
+
+import fcntl
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+UPDATE_TIMEOUT = 120
+UPDATE_INTERVAL = 24 * 60 * 60
+
+
+def main():
+    if len(sys.argv) != 4:
+        return 2
+
+    ytdlp_path = Path(sys.argv[1])
+    lock_path = Path(sys.argv[2])
+    log_path = Path(sys.argv[3])
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with lock_path.open("a+") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 0
+
+        lock_file.seek(0)
+        try:
+            if float(lock_file.read()) > time.time():
+                return 0
+        except ValueError:
+            pass
+        # Record attempts too, so a failed update cannot cause a request loop.
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(str(time.time() + UPDATE_INTERVAL))
+        lock_file.flush()
+
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("w", encoding="utf-8") as log_file:
+            started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            log_file.write(f"started={started} binary={ytdlp_path}\n")
+            log_file.flush()
+            try:
+                with subprocess.Popen(
+                    [str(ytdlp_path), "--ignore-config", "-U"], stdin=subprocess.DEVNULL,
+                    stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True,
+                ) as process:
+                    try:
+                        status = process.wait(timeout=UPDATE_TIMEOUT)
+                        log_file.write(f"exit={status}\n")
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                        log_file.write(f"timeout={UPDATE_TIMEOUT}s\n")
+            except OSError as error:
+                log_file.write(f"error={error}\n")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Read-only checks of Frame Ferry's isolated installation; no account or network access."""
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--browser-data-dir', type=Path, help='Custom Chromium user-data root')
+    parser.add_argument('--browser', choices=('helium', 'chromium', 'chrome', 'brave'), default='helium')
+    args = parser.parse_args()
+    home = Path.home()
+    config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
+    data = Path(os.environ.get('XDG_DATA_HOME', home / '.local/share')) / 'frameferry'
+    good = True
+    def check(label, result):
+        nonlocal good
+        good = good and bool(result)
+        print(('OK: ' if result else 'FAIL: ') + label)
+    check('Native Linux and Python 3.10+', sys.platform == 'linux' and sys.version_info >= (3, 10))
+    for tool, minimum in (('mpv', (0, 41)), ('deno', (2, 0)), ('yt-dlp', (2026, 8))):
+        executable = shutil.which(tool) or str(home / '.local/bin' / tool)
+        try:
+            command = [executable, '--version'] if tool != 'yt-dlp' else [executable, '--ignore-config', '--version']
+            result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+            match = re.search(r'(\d+)\.(\d+)', result.stdout)
+            check(tool + ' supported version', result.returncode == 0 and match and tuple(map(int, match.groups())) >= minimum)
+        except (OSError, subprocess.TimeoutExpired): check(tool + ' on PATH', False)
+    for name in ('frameferry-native', 'yt-dlp-mpv', 'yt-dlp-update-background'):
+        target = data / 'bin' / name
+        check(str(target), target.is_file() and os.access(target, os.X_OK)
+              and target.read_bytes() == (ROOT / 'scripts' / name).read_bytes())
+    for source in sorted((ROOT / 'extension').rglob('*')):
+        if source.is_file():
+            target = data / 'extension' / source.relative_to(ROOT / 'extension')
+            check(str(target), target.is_file() and target.read_bytes() == source.read_bytes())
+    player = config / 'frameferry/mpv'
+    for name in ('mpv.conf', 'input.conf', 'scripts/youtube.lua', 'scripts/uosc/main.lua',
+                 'scripts/thumbfast.lua', 'script-opts/youtube.conf'):
+        check(str(player / name), (player / name).is_file())
+    expected_hook = 'ytdl_path=' + str(data / 'bin/yt-dlp-mpv')
+    hook = player / 'script-opts/ytdl_hook.conf'
+    check('Absolute extractor path', hook.is_file() and hook.read_text().strip() == expected_hook)
+    key = json.loads((ROOT / 'extension/manifest.json').read_text())['key']
+    digest = hashlib.sha256(base64.b64decode(key)).hexdigest()[:32]
+    identity = ''.join(chr(ord('a') + int(char, 16)) for char in digest)
+    browser = args.browser_data_dir or config / {'helium': 'net.imput.helium', 'chrome': 'google-chrome',
+             'chromium': 'chromium', 'brave': 'BraveSoftware/Brave-Browser'}[args.browser]
+    try:
+        manifest = json.loads((browser / 'NativeMessagingHosts/frameferry.json').read_text())
+        valid = isinstance(manifest, dict) and manifest.get('name') == 'frameferry' and manifest.get('type') == 'stdio'
+        valid = valid and manifest.get('path') == str(data / 'bin/frameferry-native')
+        valid = valid and manifest.get('allowed_origins') == ['chrome-extension://' + identity + '/']
+    except (OSError, ValueError): valid = False
+    check('Native-host manifest and allowed extension ID', valid)
+    print('Local checks only. Extension activation, provider access, and GPU output require manual testing.')
+    return 0 if good else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
