@@ -24,12 +24,13 @@ async function send(resume) {
 }
 async function init() {
   preferences = await settings();
-  for (const key of ['resume', 'pause', 'fullscreen']) $(key).checked = preferences[key];
+  for (const key of ['resume', 'pause', 'fullscreen', 'autoContinue']) $(key).checked = preferences[key];
   $('quality').value = $('default-quality').value = String(preferences.quality);
-  for (const key of ['resume', 'pause', 'fullscreen', 'default-quality']) {
+  for (const key of ['resume', 'pause', 'fullscreen', 'autoContinue', 'default-quality']) {
     $(key).addEventListener('change', async () => {
       preferences = {resume: $('resume').checked, pause: $('pause').checked,
-        fullscreen: $('fullscreen').checked, quality: Number($('default-quality').value)};
+        fullscreen: $('fullscreen').checked, autoContinue: $('autoContinue').checked,
+        quality: Number($('default-quality').value)};
       await chrome.storage.local.set({preferences});
       labels();
       if (!busy) report('Defaults saved on this device.');
@@ -56,6 +57,7 @@ async function init() {
   else {
     const last = (await chrome.storage.session.get('status:' + tab.id))['status:' + tab.id];
     if (last) report(last.text, last.error);
+    if (preferences.autoContinue) await send(true);
   }
 }
 init().catch(error => report(error.message, true));

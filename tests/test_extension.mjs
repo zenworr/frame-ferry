@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import {captureVideo, pauseVideos} from '../extension/capture.js';
 import {defaults, normalize, sameVideo} from '../extension/settings.js';
 
-assert.deepEqual(normalize({quality: 999, resume: 'yes'}), defaults);
+assert.deepEqual(normalize({quality: 999, resume: 'yes', autoContinue: 'true'}), defaults);
+assert.equal(defaults.autoContinue, false);
+assert.equal(normalize({autoContinue: true}).autoContinue, true);
 assert.equal(sameVideo('https://youtu.be/abc?t=7', 'https://www.youtube.com/watch?v=abc'), true);
 assert.equal(sameVideo('https://youtube.com.evil.test/watch?v=abc', 'https://www.youtube.com/watch?v=abc'), false);
 assert.equal(sameVideo('https://www.youtube.com/watch?v=abc', 'https://www.youtube.com/watch?v=other'), false);
@@ -74,4 +76,55 @@ assert.equal(captureVideo().position, 40);
 document.querySelector = () => ({}); assert.equal(captureVideo(), null);
 document.querySelector = () => null; document.querySelectorAll = () => [video(1000, 40, {duration: Infinity})];
 assert.equal(captureVideo(), null);
-console.log('Frame Ferry: settings, identity, timestamps, readiness, pause, navigation, duplicate requests and capture passed.');
+let popupCount = 0;
+async function openPopup(preferences = {}, url = 'https://example.org/video', playResponse = {ok: true, message: 'Ready'}) {
+ const elements = new Map();
+ globalThis.document = {getElementById(id) {
+  if (!elements.has(id)) elements.set(id, {checked: false, disabled: true, value: '',
+   classList: {toggle() {}}, listeners: {}, addEventListener(event, handler) { this.listeners[event] = handler; }});
+  return elements.get(id);
+ }};
+ const messages = [], saved = [];
+ globalThis.chrome = {
+  storage: {local: {async get() { return {preferences}; }, async set(value) { saved.push(value.preferences); }},
+   session: {async get() { return {}; }}},
+  tabs: {async query() { return [{id: 7, title: 'Video', url}]; }},
+  runtime: {async sendMessage(message) {
+   messages.push(message);
+   return message.action === 'inspect' ? {position: 42} : await playResponse;
+  }},
+ };
+ await import(`../extension/popup.js?test=${++popupCount}`);
+ await new Promise(resolve => setImmediate(resolve));
+ return {elements, saved, plays: () => messages.filter(message => message.action === 'play')};
+}
+let popup = await openPopup();
+assert.equal(popup.elements.get('autoContinue').checked, false);
+assert.equal(popup.plays().length, 0);
+popup.elements.get('autoContinue').checked = true;
+await popup.elements.get('autoContinue').listeners.change();
+assert.equal(popup.saved[0].autoContinue, true);
+assert.equal(popup.plays().length, 0); // Changing the setting does not start playback.
+popup = await openPopup(popup.saved[0]);
+assert.deepEqual(popup.plays(), [{action: 'play', tabId: 7, resume: true, quality: 2160}]);
+assert.equal(popup.elements.get('status').textContent, 'Ready');
+popup = await openPopup({autoContinue: true, resume: false, quality: 720});
+assert.equal(popup.plays()[0].resume, true);
+assert.equal(popup.plays()[0].quality, 720);
+popup = await openPopup({autoContinue: true}, 'chrome://extensions');
+assert.equal(popup.plays().length, 0);
+assert.equal(popup.elements.get('send').disabled, true);
+let finishPlay;
+popup = await openPopup({autoContinue: true}, undefined, new Promise(resolve => { finishPlay = resolve; }));
+assert.equal(popup.elements.get('send').disabled, true);
+await popup.elements.get('send').listeners.click();
+assert.equal(popup.plays().length, 1);
+finishPlay({ok: false, message: 'Could not play'});
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(popup.elements.get('status').textContent, 'Could not play');
+assert.equal(popup.elements.get('send').disabled, false);
+popup.elements.get('autoContinue').checked = false;
+await popup.elements.get('autoContinue').listeners.change();
+popup = await openPopup(popup.saved[0]);
+assert.equal(popup.plays().length, 0);
+console.log('Frame Ferry: settings, identity, timestamps, readiness, pause, navigation, duplicate requests, capture and popup passed.');

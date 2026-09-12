@@ -15,6 +15,10 @@ Use the browser's **user-data root**, not its `Default` profile subdirectory. Th
 
 Flatpak/Snap browsers need integration that can launch the helper outside their sandbox. This installer does not configure or test that path. “Native messaging” names the browser API; it does not require a system-packaged browser.
 
+## Browser settings
+
+Enable **Continue in mpv when opening the panel** under **Defaults & settings** to start the handoff when you click the extension icon. The panel stays open and shows the result. This setting is off by default and also applies when the keyboard shortcut opens the panel. It requests the current position regardless of the separate default playback action.
+
 ## Player settings and files
 
 Default locations follow `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_STATE_HOME`:

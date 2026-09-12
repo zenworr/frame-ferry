@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-export const defaults = Object.freeze({resume: true, pause: true, fullscreen: false, quality: 2160});
+export const defaults = Object.freeze({resume: true, pause: true, fullscreen: false, autoContinue: false, quality: 2160});
 export const heights = [0, 480, 720, 1080, 1440, 2160];
 export function normalize(value = {}) {
   const result = {...defaults};
-  for (const key of ['resume', 'pause', 'fullscreen']) if (typeof value[key] === 'boolean') result[key] = value[key];
+  for (const key of ['resume', 'pause', 'fullscreen', 'autoContinue']) if (typeof value[key] === 'boolean') result[key] = value[key];
   if (heights.includes(value.quality)) result.quality = value.quality;
   return result;
 }
