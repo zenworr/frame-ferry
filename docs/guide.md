@@ -47,7 +47,7 @@ Selected quality → additional access methods → earlier usable stream
                                              → error screen
 ```
 
-Recovery has a 30-second limit. Account access and token support require setup below; unavailable routes are skipped or fail quickly. Provider restrictions can still prevent playback. `Alt+q` goes directly to the fast fallback.
+Recovery has a 30-second default limit; see [Frame Ferry configuration](../README.md#frame-ferry-configuration) to change it. Account access and token support require setup below; unavailable routes are skipped or fail quickly. Provider restrictions can still prevent playback. `Alt+q` goes directly to the fast fallback.
 
 ## Account access and updates
 
@@ -74,7 +74,7 @@ The provider runs on demand, with no persistent server. It is installed under `~
 ## Troubleshooting
 
 - **Native host missing:** install for the correct browser/data root, reload the extension, and use **Check native host** in the popup.
-- **Missing player tools:** ensure the browser-launched process can find them. The host also adds `~/.local/bin` to PATH.
+- **Missing player tools:** set absolute executable paths in [Frame Ferry configuration](../README.md#frame-ferry-configuration), or put the tools on the browser's `PATH` or in `~/.local/bin`.
 - **Playback fails:** check current yt-dlp support and account requirements. Browser playback does not prove extraction will work.
 - **Shortcut does nothing:** configure it on the browser's extension-shortcuts page.
 

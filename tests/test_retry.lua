@@ -1,6 +1,6 @@
 local mock = dofile("tests/mp_mock.lua")
-local function player()
-    local p = mock("config/mpv/scripts/youtube.lua", {options = {cookies_browser = "chromium:test"}})
+local function player(recovery_timeout)
+    local p = mock("config/mpv/scripts/youtube.lua", {options = {cookies_browser = "chromium:test", recovery_timeout = recovery_timeout}})
     function p.load(url, raw)
         p.properties.path = url
         p.properties["options/ytdl-raw-options"] = raw or {["format-sort"] = "res:2160"}
@@ -87,6 +87,25 @@ d.load(url); assert(d.route() == "error")
 local total = 0
 for _, t in ipairs(d.timers) do total = total + t.seconds end
 assert(total <= 30, "startup budget exceeded")
+
+for _, limit in ipairs({10, 60, 300}) do
+    local configured = player(limit)
+    for _, route in ipairs({"primary", "authenticated", "token", "fallback"}) do
+        configured.load(url)
+        assert(configured.route() == route)
+        assert(configured.properties["file-local-options/network-timeout"] == 4 * limit / 30)
+        configured.timeout()
+    end
+    configured.load(url)
+    assert(configured.route() == "error")
+    assert(math.abs(configured.clock - 29 * limit / 30) < 0.001, "configured route budgets were not used")
+    local expired = player(limit)
+    expired.load(url)
+    expired.clock = limit
+    expired.finish("error")
+    expired.load(url)
+    assert(expired.route() == "error", "configured recovery deadline was not used")
+end
 
 local e = player()
 e.load(url); e.keys["Alt+q"](); e.finish("stop"); e.load(url)

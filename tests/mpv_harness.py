@@ -100,6 +100,7 @@ info['url'] = 'http://127.0.0.1:{self.server.server_port}/' + (action if action 
 print(json.dumps(info))
 ''')
             self.extractor.chmod(0o755)
+            (self.root / 'deno').symlink_to(sys.executable)
             state = self.root / '.local/state/frameferry'
             state.mkdir(parents=True)
             (state / 'yt-dlp-update.lock').write_text(str(time.time() + 86400))
@@ -140,6 +141,7 @@ end)
                 command.append(url)
             env = {**os.environ, 'HOME': str(self.root), 'TMPDIR': str(self.root),
                    'XDG_STATE_HOME': str(self.root / '.local/state'), 'XDG_DATA_HOME': str(self.root / '.local/share'),
+                   'XDG_CONFIG_HOME': str(self.root / '.config'),
                    'PATH': str(self.root) + os.pathsep + os.environ['PATH']}
             self.started = time.monotonic()
             self.process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,

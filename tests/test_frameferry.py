@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from helpers import ROOT, load_script
+from frameferry_config import DEFAULTS
 
 native = load_script('frameferry-native')
 
@@ -22,6 +23,11 @@ def request(**changes):
 
 
 class NativeTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(native, 'load_config', return_value=dict(DEFAULTS))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @unittest.skipUnless(shutil.which('node'), 'Node.js is needed for extension tests')
     def test_extension_behavior(self):
         result = subprocess.run(['node', str(ROOT / 'tests/test_extension.mjs')],
@@ -70,14 +76,14 @@ class NativeTests(unittest.TestCase):
                 native.validate(value)
 
     def test_start_is_entry_local_and_quality_is_bounded(self):
-        with patch.object(native.shutil, 'which', return_value='/usr/bin/mpv'):
+        with patch.object(native, 'executable', return_value='/usr/bin/mpv'):
             command = native.command_for(request(position=0), Path('/tmp/socket'))
         self.assertEqual(command[-4:], ['--{', '--start=0', 'https://www.youtube.com/watch?v=fixture&t=0', '--}'])
         self.assertIn('--ytdl-format=bestvideo[height<=?1080]+bestaudio/best[height<=?1080]', command)
         self.assertIn('--fullscreen=no', command)
 
     def test_null_position_preserves_url_and_player_history(self):
-        with patch.object(native.shutil, 'which', return_value='mpv'):
+        with patch.object(native, 'executable', return_value='mpv'):
             command = native.command_for(request(position=None, quality=0), Path('/tmp/socket'))
         self.assertEqual(command[-2:], ['--', request()['url']])
         self.assertFalse(any(arg.startswith('--start=') for arg in command))

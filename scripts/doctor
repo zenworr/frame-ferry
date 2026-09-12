@@ -9,9 +9,10 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
+
+from frameferry_config import executable, load_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,18 +31,26 @@ def main():
         good = good and bool(result)
         print(('OK: ' if result else 'FAIL: ') + label)
     check('Native Linux and Python 3.10+', sys.platform == 'linux' and sys.version_info >= (3, 10))
-    for tool, minimum in (('mpv', (0, 41)), ('deno', (2, 0)), ('yt-dlp', (2026, 8))):
-        executable = shutil.which(tool) or str(home / '.local/bin' / tool)
+    try:
+        settings = load_config()
+    except (OSError, ValueError) as error:
+        check(str(error), False)
+        return 1
+    check('Frame Ferry configuration', True)
+    for tool, minimum in (('mpv', (0, 41)), ('deno', (2, 0)), ('yt_dlp', (2026, 8))):
         try:
-            command = [executable, '--version'] if tool != 'yt-dlp' else [executable, '--ignore-config', '--version']
+            path = executable(settings, tool)
+            command = [path, '--version'] if tool != 'yt_dlp' else [path, '--ignore-config', '--version']
             result = subprocess.run(command, capture_output=True, text=True, timeout=5)
             match = re.search(r'(\d+)\.(\d+)', result.stdout)
             check(tool + ' supported version', result.returncode == 0 and match and tuple(map(int, match.groups())) >= minimum)
-        except (OSError, subprocess.TimeoutExpired): check(tool + ' on PATH', False)
+        except (OSError, subprocess.TimeoutExpired): check(tool + ' executable', False)
     for name in ('frameferry-native', 'yt-dlp-mpv', 'yt-dlp-update-background'):
         target = data / 'bin' / name
         check(str(target), target.is_file() and os.access(target, os.X_OK)
               and target.read_bytes() == (ROOT / 'scripts' / name).read_bytes())
+    shared = data / 'bin/frameferry_config.py'
+    check(str(shared), shared.is_file() and shared.read_bytes() == (ROOT / 'scripts/frameferry_config.py').read_bytes())
     for source in sorted((ROOT / 'extension').rglob('*')):
         if source.is_file():
             target = data / 'extension' / source.relative_to(ROOT / 'extension')

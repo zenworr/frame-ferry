@@ -1,6 +1,9 @@
 local msg = require("mp.msg")
-local options = {cookies_browser = "", cookies_initial = false, auto_update = false}
+local options = {cookies_browser = "", cookies_initial = false, auto_update = false, recovery_timeout = 30}
 require("mp.options").read_options(options, "youtube")
+local recovery_timeout = options.recovery_timeout
+if recovery_timeout ~= recovery_timeout or recovery_timeout < 10 or recovery_timeout > 300 then recovery_timeout = 30 end
+local timeout_scale = recovery_timeout / 30
 
 local next_mode, mode, youtube_url, failed, unsupported, pause_before_error
 local timer, timed_out, started, loaded, use_cookies, requires_auth, last_position, resume_position
@@ -82,11 +85,11 @@ mp.add_hook("on_load", 5, function()
     mp.set_property("user-data/youtube-quality/route", "")
     if not youtube_url then return end
 
-    local remaining = 30 - (mp.get_time() - started)
+    local remaining = recovery_timeout - (mp.get_time() - started)
     if mode ~= "browser" then
         if remaining <= 0 then
             mode = "error"
-        elseif mode ~= "error" and mode ~= "fallback" and remaining < 10 then
+        elseif mode ~= "error" and mode ~= "fallback" and remaining < 10 * timeout_scale then
             mode = "fallback"
         end
     end
@@ -106,7 +109,7 @@ mp.add_hook("on_load", 5, function()
     end
 
     -- Reserve time for a usable fallback, including a short availability wait.
-    local budget = math.min(budgets[mode], remaining - ((mode == "fallback" or mode == "retained") and 0 or 7))
+    local budget = math.min(budgets[mode] * timeout_scale, remaining - ((mode == "fallback" or mode == "retained") and 0 or 7 * timeout_scale))
     local raw = mp.get_property_native("options/ytdl-raw-options", {})
     if mode == "hls" or mode == "fallback" then use_cookies = requires_auth end
     use_cookies = use_cookies or mode == "authenticated" or raw["cookies-from-browser"] ~= nil
@@ -118,9 +121,9 @@ mp.add_hook("on_load", 5, function()
     raw["frameferry-update"] = options.auto_update and "yes" or "no"
     raw["frameferry-route"] = mode
     raw["frameferry-candidate"] = mode == "retained" and candidate_path or nil
-    raw["frameferry-timeout"] = tostring(math.max(0.1, budget - 0.5))
+    raw["frameferry-timeout"] = tostring(math.max(0.1, budget - 0.5 * timeout_scale))
     mp.set_property_native("file-local-options/ytdl-raw-options", raw)
-    mp.set_property_number("file-local-options/network-timeout", 4)
+    mp.set_property_number("file-local-options/network-timeout", 4 * timeout_scale)
     if resume_position then mp.set_property("file-local-options/start", tostring(resume_position)) end
     mp.set_property_bool("user-data/youtube-quality/loading", true)
     msg.info(notices[mode])
@@ -202,7 +205,7 @@ mp.add_hook("on_after_end_file", 40, function()
         if unsupported and mode ~= "hls" and mode ~= "fallback" then next_mode = "hls" end
         if mode == "primary" and (use_cookies or options.cookies_browser == "") and next_mode == "authenticated" then next_mode = "token" end
     end
-    if next_mode ~= "browser" and mp.get_time() - started >= 30 then next_mode = "error" end
+    if next_mode ~= "browser" and mp.get_time() - started >= recovery_timeout then next_mode = "error" end
     if next_mode == "error" then msg.error("YouTube playback routes failed or exceeded the time limit") end
     mp.commandv("playlist-play-index", "current")
 end)

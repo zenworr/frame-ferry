@@ -12,6 +12,7 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
 
 
 def load_script(name):
@@ -71,8 +72,9 @@ info.update(json.loads(os.environ.get('FAKE_INFO', '{}')))
 print(json.dumps(info))
 ''')
         self.fake.chmod(0o755)
+        (self.home / 'deno').symlink_to(sys.executable)
         self.env = {**os.environ, 'HOME': str(self.home), 'XDG_STATE_HOME': str(self.home / '.local/state'),
-                    'XDG_DATA_HOME': str(self.home / '.local/share'),
+                    'XDG_DATA_HOME': str(self.home / '.local/share'), 'XDG_CONFIG_HOME': str(self.home / '.config'),
                     'PATH': str(self.home) + os.pathsep + os.environ['PATH']}
         self.addCleanup(self.stop_fixture)
 

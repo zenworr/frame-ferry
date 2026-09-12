@@ -129,6 +129,41 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         self.executable('mpv', '#!/bin/sh\necho "mpv v0.39.0"\n')
         self.assertEqual(self.doctor().returncode, 1)
 
+    def test_runtime_config_is_private_preserved_and_checked(self):
+        self.prepare()
+        path = self.config / 'frameferry/config.json'
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        settings = json.loads(path.read_text())
+        for key, name in (('mpv', 'mpv'), ('yt_dlp', 'yt-dlp'), ('deno', 'deno')):
+            target = self.bin / ('custom ' + name)
+            (self.bin / name).rename(target)
+            settings[key] = str(target)
+            self.executable(name, '#!/bin/sh\nexit 1\n')
+        settings.update(recovery_timeout=60, startup_timeout=68, proxy='http://localhost:8080')
+        content = json.dumps(settings)
+        path.write_text(content)
+        self.assertEqual(self.install().returncode, 0)
+        self.assertEqual(path.read_text(), content)
+        self.assertEqual(self.doctor().returncode, 0, self.doctor().stdout)
+        settings['startup_timeout'] = 38
+        path.write_text(json.dumps(settings))
+        self.assertEqual(self.doctor().returncode, 1)
+        self.assertNotEqual(self.install().returncode, 0)
+
+    def test_configured_paths_work_before_first_install(self):
+        path = self.config / 'frameferry/config.json'
+        path.parent.mkdir(parents=True)
+        settings = {}
+        for key, name in (('mpv', 'mpv'), ('yt_dlp', 'yt-dlp'), ('deno', 'deno')):
+            target = self.bin / ('custom ' + name)
+            (self.bin / name).rename(target)
+            settings[key] = str(target)
+            self.executable(name, '#!/bin/sh\nexit 1\n')
+        path.write_text(json.dumps(settings))
+        self.prepare()
+        self.assertEqual(json.loads(path.read_text()), settings)
+        self.assertEqual(self.doctor().returncode, 0, self.doctor().stdout)
+
     def test_browser_targets_and_custom_userdata(self):
         for browser, folder in (('chromium', 'chromium'), ('chrome', 'google-chrome'), ('brave', 'BraveSoftware/Brave-Browser')):
             self.assertEqual(self.install('install.sh', '--browser', browser).returncode, 0)

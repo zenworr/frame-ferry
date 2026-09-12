@@ -6,13 +6,14 @@ import ctypes
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 from urllib.parse import urlparse
+
+from frameferry_config import executable, load_config, proxy_environment
 
 
 YOUTUBE_HOSTS = {"youtube.com", "youtube-nocookie.com", "youtu.be"}
@@ -163,15 +164,21 @@ def start_background_update(ytdlp):
 
 
 def main():
+    config = load_config()
+    scale = config['recovery_timeout'] / 30
+    maximum_timeout = EXTRACTION_TIMEOUT * scale
+    env = proxy_environment(config)
+    os.environ.clear()
+    os.environ.update(env)
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--frameferry-route", default="primary",
                         choices=["primary", "authenticated", "token", "hls", "retained", "fallback"])
-    parser.add_argument("--frameferry-timeout", type=float, default=EXTRACTION_TIMEOUT)
+    parser.add_argument("--frameferry-timeout", type=float, default=maximum_timeout)
     parser.add_argument("--frameferry-candidate")
     parser.add_argument("--frameferry-update", choices=["yes", "no"], default="no")
     options, args = parser.parse_known_args(sys.argv[1:])
     route = options.frameferry_route
-    timeout = max(0.1, min(EXTRACTION_TIMEOUT, options.frameferry_timeout))
+    timeout = max(0.1, min(maximum_timeout, options.frameferry_timeout))
     if route == "retained":
         if not options.frameferry_candidate:
             parser.error("retained playback requires a candidate file")
@@ -199,17 +206,16 @@ def main():
         sys.stdout.buffer.write(stdout)
         return 0
 
-    ytdlp = shutil.which("yt-dlp")
-    if ytdlp is None:
-        sys.stderr.write("yt-dlp-mpv: yt-dlp was not found in PATH\n")
-        return 127
+    ytdlp = executable(config, 'yt_dlp')
+    deno = executable(config, 'deno')
     youtube = any(is_youtube_url(arg) for arg in args)
-    command = [ytdlp, "--ignore-config"]
+    command = [ytdlp, "--ignore-config", "--no-js-runtimes", "--js-runtimes", f"deno:{deno}",
+               "--proxy", config['proxy']]
     if youtube and options.frameferry_update == "yes":
         start_background_update(ytdlp)
 
     if youtube and any(arg in JSON_FLAGS for arg in args):
-        command += ["--socket-timeout", "5", "--retries", "0", "--extractor-retries", "0"]
+        command += ["--socket-timeout", str(5 * scale), "--retries", "0", "--extractor-retries", "0"]
         separator = args.index("--") if "--" in args else len(args)
         cookies = any(
             arg in {"--cookies", "--cookies-from-browser"}
@@ -252,4 +258,8 @@ def main():
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--extractor-worker"]:
         raise SystemExit(extractor_worker(int(sys.argv[2]), sys.argv[3:]))
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (OSError, ValueError) as error:
+        sys.stderr.write(f"yt-dlp-mpv: {error}\n")
+        raise SystemExit(1)

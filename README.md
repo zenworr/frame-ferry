@@ -48,6 +48,27 @@ Replace `helium` with `chromium`, `chrome`, or `brave` as needed.
 
 A 4K limit is not a guarantee of 4K playback. YouTube recovery tries the selected quality before a reduced-quality fallback. Provider restrictions can still prevent playback. Live/DVR position transfer is not supported.
 
+## Frame Ferry configuration
+
+The installer creates `~/.config/frameferry/config.json` (under `$XDG_CONFIG_HOME` when set):
+
+```json
+{
+  "mpv": "",
+  "yt_dlp": "",
+  "deno": "",
+  "recovery_timeout": 30,
+  "startup_timeout": 38,
+  "proxy": ""
+}
+```
+
+- **Executables:** empty values search `PATH`, then `~/.local/bin`. Set absolute executable paths for custom installations. You can create this file before installation if the tools are not on `PATH`.
+- **Timeouts:** seconds. `recovery_timeout` sets the YouTube recovery budget (10–300) and scales its route and network timeouts. `startup_timeout` sets how long the extension waits for playback (maximum 600); it must be at least 8 seconds longer than recovery.
+- **Proxy:** empty means direct access, ignoring inherited proxy environment variables. Set an HTTP proxy such as `http://127.0.0.1:8080` for extraction and media playback. HTTPS video requires CONNECT support. SOCKS and HTTPS proxy addresses are not supported. Inherited `no_proxy` rules are ignored so extraction and playback use the same route.
+
+These settings stay in the local helper; the extension cannot supply executable paths or proxy settings. Keep the file private if the proxy URL contains credentials. Updates preserve it. Changes apply to new handoffs; run `python3 scripts/doctor --browser helium` to check the configuration without network access.
+
 ## Update or remove
 
 To update, run `git pull`, rerun the three installer commands above, then **reload the extension**. There are no browser-store updates. The installer preserves local edits.

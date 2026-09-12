@@ -6,7 +6,6 @@ import json
 import math
 import os
 from pathlib import Path
-import shutil
 import socket
 import struct
 import subprocess
@@ -14,6 +13,8 @@ import sys
 import tempfile
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from frameferry_config import executable, load_config, proxy_environment
 
 
 CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'frameferry/mpv'
@@ -51,14 +52,13 @@ def validate(message):
     return message
 
 
-def command_for(message, ipc):
-    executable = shutil.which('mpv')
-    if executable is None:
-        raise FileNotFoundError('mpv is not on PATH. Install mpv 0.41 or newer.')
-    command = [executable, f'--config-dir={CONFIG}', f'--input-ipc-server={ipc}',
+def command_for(message, ipc, config=None):
+    config = load_config() if config is None else config
+    command = [executable(config, 'mpv'), f'--config-dir={CONFIG}', f'--input-ipc-server={ipc}',
                '--idle=no', '--terminal=yes', '--input-terminal=no', '--term-osd=no',
                '--term-status-msg=', '--msg-color=no', '--msg-level=all=info',
-               '--fullscreen=' + ('yes' if message['fullscreen'] else 'no')]
+               '--fullscreen=' + ('yes' if message['fullscreen'] else 'no'),
+               f'--script-opts-append=youtube-recovery_timeout={config["recovery_timeout"]}']
     height = message['quality']
     if height:
         command.append(f'--ytdl-format=bestvideo[height<=?{height}]+bestaudio/best[height<=?{height}]')
@@ -119,11 +119,12 @@ def wait_for_playback(process, path, deadline):
 
 def handle(message):
     message = validate(message)
+    config = load_config()
     if not (CONFIG / 'mpv.conf').is_file():
         raise FileNotFoundError('Frame Ferry is not set up. Run scripts/setup-frameferry.')
     if message['action'] == 'check':
-        if not shutil.which('mpv'):
-            raise FileNotFoundError('mpv is not on PATH.')
+        for tool in ('mpv', 'yt_dlp', 'deno'):
+            executable(config, tool)
         return {'ok': True, 'message': 'Native host and player configuration found. Playback has not been tested.'}
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     STATE.chmod(0o700)
@@ -131,12 +132,13 @@ def handle(message):
         old.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix='frameferry-', dir='/tmp') as temp:
         ipc = Path(temp) / 'ipc'
-        command = command_for(message, ipc)
+        command = command_for(message, ipc, config)
         with tempfile.NamedTemporaryFile(prefix='player-', suffix='.log', dir=STATE, delete=False) as output:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
-                                       stderr=subprocess.STDOUT, start_new_session=True)
+                                       stderr=subprocess.STDOUT, start_new_session=True,
+                                       env=proxy_environment(config))
         try:
-            wait_for_playback(process, ipc, time.monotonic() + 38)
+            wait_for_playback(process, ipc, time.monotonic() + config['startup_timeout'])
         except Exception:
             if process.poll() is None:
                 process.terminate()
@@ -171,7 +173,6 @@ def serve(incoming, outgoing):
 
 
 if __name__ == '__main__':
-    os.environ['PATH'] = str(Path.home() / '.local/bin') + os.pathsep + os.environ.get('PATH', '')
     try:
         serve(sys.stdin.buffer, sys.stdout.buffer)
     except BrokenPipeError:
