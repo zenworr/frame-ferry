@@ -1,4 +1,4 @@
 # Development tools only. The runtime uses the Python standard library.
-ruff==0.16.2
+ruff==0.16.8
 pip-audit==2.10.1
 shellcheck-py==0.11.0.1
