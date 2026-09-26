@@ -221,10 +221,24 @@ g.loaded()
 g.keys["Ctrl+b"]()
 assert(g.properties.pause, "browser fallback did not pause playback")
 assert(g.async_commands[#g.async_commands].args[2] == url .. "&t=54", "browser lost VOD position")
+assert(g.commands[#g.commands][1] == "quit", "successful browser handoff left mpv open")
 
-g.observe("time-pos", 0)
-g.keys["Ctrl+b"]()
-assert(g.async_commands[#g.async_commands].args[2] == url .. "&t=0", "browser kept an old timestamp at zero")
+local zero = player()
+zero.load(url)
+zero.loaded()
+zero.properties.duration = 1800
+zero.observe("time-pos", 0)
+zero.keys["Ctrl+b"]()
+assert(zero.async_commands[#zero.async_commands].args[2] == url .. "&t=0", "browser kept an old timestamp at zero")
+assert(zero.commands[#zero.commands][1] == "quit", "browser handoff at zero left mpv open")
+
+local browser_failure = mock("config/mpv/scripts/youtube.lua", { async_status = 1 })
+browser_failure.properties.path = url
+browser_failure.hook("on_load", 5)
+browser_failure.fire("file-loaded")
+browser_failure.bindings["youtube-browser"]()
+assert(#browser_failure.commands == 0, "failed browser launch closed mpv")
+assert(browser_failure.messages[#browser_failure.messages][1] == "Could not open the browser")
 
 local retained = player()
 retained.load(url)

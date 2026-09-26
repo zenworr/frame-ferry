@@ -41,7 +41,7 @@ Replace `helium` with `chromium`, `chrome`, or `brave` as needed.
 | Right-click | Pause / resume |
 | `F2` | Change the resolution limit |
 | `Ctrl+r` | Retry YouTube playback at the current position |
-| `Ctrl+b` | Continue YouTube playback in the browser |
+| `Ctrl+b` | Open YouTube in the browser, then close mpv |
 | `Alt+q` | Use the fast, lower-quality YouTube fallback |
 | `Alt+s` | Toggle sponsor skipping |
 | `Ctrl+h` | Change hardware decoding mode |

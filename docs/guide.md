@@ -37,7 +37,7 @@ Software decoding is the default. If playback drops frames, use `Ctrl+h` to comp
 
 Continue reads the main-page video's position when clicked. It does not read positions from child frames or support live/DVR position transfer. If no position is available, playback uses the URL or saved history. Start from the beginning explicitly requests zero.
 
-For YouTube, a handoff timestamp overrides saved history. Retry keeps the current position. Accessible browser videos are paused only after mpv confirms playback; frames that cannot verify the original page stay playing.
+For YouTube, a handoff timestamp overrides saved history. Retry keeps the current position. Browser playback continues while mpv starts, so the position captured when you click may be behind what you see by the time mpv starts. The **Continue in browser** control opens the saved position and closes mpv after the browser-open command succeeds. Accessible browser videos are paused only after mpv confirms playback; frames that cannot verify the original page stay playing.
 
 Changing the saved default resolution also updates the current panel's resolution unless you have selected a different per-launch limit.
 

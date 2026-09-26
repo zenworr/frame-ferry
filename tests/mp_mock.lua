@@ -111,7 +111,7 @@ return function(script, overrides)
         end,
         command_native_async = function(args, callback)
             table.insert(p.async_commands, args)
-            callback(true, { status = 0 })
+            callback(true, { status = overrides.async_status or 0 })
         end,
     }
     local function dispatch(list, name, ...)

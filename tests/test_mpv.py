@@ -201,12 +201,8 @@ class MpvTests(unittest.TestCase):
                 destination = p.root / 'browser-url'
                 p.wait(destination.exists)
                 self.assertEqual(destination.read_text(), URL + '?t=42')
-                self.assertTrue(p.get('pause'))
-                calls = len((p.root / 'calls').read_text().splitlines())
-                p.command('loadfile', URL)
-                p.wait(lambda p=p, calls=calls: len((p.root / 'calls').read_text().splitlines()) > calls)
-                p.wait_loaded('primary' if not routes else 'authenticated')
-                self.assertLess(p.get('time-pos'), 1, 'browser timestamp leaked into a new load')
+                p.wait(lambda p=p: p.process.poll() is not None)
+                self.assertEqual(p.process.returncode, 0)
 
     def test_manual_retry_preserves_position_and_pause(self):
         p = self.player(duplicates=True)
@@ -308,7 +304,8 @@ class MpvTests(unittest.TestCase):
                 self.assertEqual(descriptor.stat().st_mode & 0o777, 0o600)
                 if action == 'browser':
                     p.command('script-binding', 'youtube/youtube-browser')
-                    p.wait(lambda p=p: p.get('media-title') == 'Continue in browser')
+                    p.wait(lambda p=p: p.process.poll() is not None)
+                    self.assertEqual(p.process.returncode, 0)
                 else:
                     if action == 'kill':
                         p.process.kill()
@@ -342,11 +339,19 @@ class MpvTests(unittest.TestCase):
         p.wait(lambda: p.get('user-data/youtube-quality/loading'))
         p.command('script-binding', 'youtube/youtube-browser')
         p.wait(lambda: (p.root / 'browser-url').exists())
-        p.wait(lambda: p.get('media-title') == 'Continue in browser' and p.get('video-params'))
+        p.wait(lambda: p.process.poll() is not None)
+        self.assertEqual(p.process.returncode, 0)
         self.assertEqual((p.root / 'browser-url').read_text(), URL)
-        self.assertFalse(p.get('user-data/youtube-quality/loading'))
-        self.assertTrue(p.get('pause'))
-        self.assertEqual(p.get('playlist-count'), 1)
+        self.assertNotIn('YouTube playback failed', p.log.read_text())
+
+    def test_browser_open_failure_keeps_player_available(self):
+        p = self.player()
+        p.wait_loaded('primary')
+        browser = p.root / 'xdg-open'
+        browser.write_text('#!/bin/sh\nexit 1\n')
+        p.command('script-binding', 'youtube/youtube-browser')
+        p.wait(lambda: 'Could not open the browser' in p.log.read_text())
+        self.assertIsNone(p.process.poll())
 
     def test_sponsorblock_timer_and_toggle_in_real_mpv(self):
         p = self.player(options=[f'--script={ROOT}/config/mpv/scripts/sponsorblock_chapter_skip.lua'])

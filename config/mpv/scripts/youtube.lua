@@ -553,7 +553,9 @@ mp.add_key_binding("Ctrl+b", "youtube-browser", function()
         mp.command_native_async(
             { name = "subprocess", playback_only = false, args = { "xdg-open", url } },
             function(success, result)
-                if not success or result.status ~= 0 then
+                if success and result and result.status == 0 then
+                    mp.commandv("quit")
+                else
                     mp.osd_message("Could not open the browser", OSD_SECONDS.long)
                 end
             end
