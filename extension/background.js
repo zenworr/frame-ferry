@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {settings, normalize, sameVideo, heights} from './settings.js';
-import {captureVideo, pauseVideos} from './capture.js';
+import {captureVideo, pauseVideos, finishPause} from './capture.js';
 
 const pending = new Set();
 const host = 'frameferry';
@@ -34,6 +34,7 @@ export async function launch(tabId, overrides = {}, link = null) {
   if (pending.has(tabId)) return {ok: false, message: 'A handoff is already in progress for this tab.'};
   pending.add(tabId);
   let page = null,
+    held = false,
     result;
   try {
     const preferences = {...(await settings()), ...overrides};
@@ -43,10 +44,22 @@ export async function launch(tabId, overrides = {}, link = null) {
     let url = link || tab.url;
     if (!/^https?:\/\//i.test(url || ''))
       throw Error('Open an HTTP or HTTPS video page first. Browser settings and local files cannot be sent.');
-    await status(tabId, page, 'Opening mpv. The browser keeps playing until mpv is ready.');
+    await status(tabId, page, options.pause ? 'Pausing the browser while mpv starts.' : 'Opening mpv.');
     const captured = await inspect(tabId);
     const matches = captured && sameVideo(captured.page, url);
     const position = options.resume ? (matches ? captured.position : null) : 0;
+    let incompletePause = false;
+    if (options.pause) {
+      held = true;
+      const frames = await chrome.scripting.executeScript({
+        target: {tabId, allFrames: true},
+        func: pauseVideos,
+        args: [page],
+      });
+      if (frames[0]?.result !== true) throw Error('The page changed before it could be paused. Try again.');
+      incompletePause = frames.some((frame) => frame.result !== true);
+      if ((await chrome.tabs.get(tabId)).url !== page) throw Error('The page changed during handoff. Try again.');
+    }
     // Watch URLs support timestamp playback for Shorts and embedded YouTube videos too.
     const parsed = new URL(url);
     if (
@@ -66,26 +79,26 @@ export async function launch(tabId, overrides = {}, link = null) {
       fullscreen: options.fullscreen,
     });
     if (!response?.ok) throw Error(response?.message || 'The native host did not confirm playback.');
-    let message = 'mpv is playing.';
-    if (options.pause) {
-      try {
-        if (sameVideo((await chrome.tabs.get(tabId)).url, tab.url)) {
-          const frames = await chrome.scripting.executeScript({
-            target: {tabId, allFrames: true},
-            func: pauseVideos,
-            args: [tab.url],
-          });
-          if (frames.some((frame) => frame.result === false))
-            message += ' Some browser videos were left playing because the page could not be verified.';
-        } else message += ' The browser tab changed, so it was left playing.';
-      } catch {
-        message += ' The browser could not be paused; pause it manually if needed.';
-      }
-    }
-    result = {ok: true, message};
+    result = {
+      ok: true,
+      message: 'mpv is playing.' + (incompletePause ? ' Some browser frames could not be paused or verified.' : ''),
+    };
   } catch (error) {
     result = {ok: false, message: publicError(error)};
   } finally {
+    if (held) {
+      try {
+        const frames = await chrome.scripting.executeScript({
+          target: {tabId, allFrames: true},
+          func: finishPause,
+          args: [page, !result?.ok],
+        });
+        if (!result?.ok && frames.some((frame) => frame.result === false))
+          result.message += ' Some browser videos could not be resumed; check the tab.';
+      } catch {
+        if (!result?.ok) result.message += ' The browser could not be resumed; check the tab.';
+      }
+    }
     pending.delete(tabId);
   }
   await status(tabId, page, result.message, !result.ok);

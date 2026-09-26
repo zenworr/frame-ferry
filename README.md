@@ -4,7 +4,7 @@
 
 **Send browser videos to mpv. Keep your place.**
 
-Continue from the current position, when available, or start over. Choose a resolution limit and fullscreen playback. Frame Ferry can pause accessible browser videos after mpv confirms playback. If mpv fails to start, the browser keeps playing.
+Continue from the current position, when available, or start over. Choose a resolution limit and fullscreen playback. By default, Frame Ferry pauses accessible browser videos while mpv starts, so the saved position does not fall behind. If mpv fails, it resumes the videos it paused. Turn browser pausing off in the extension settings if you prefer to keep watching during startup.
 
 Frame Ferry includes timeline previews, SponsorBlock controls, and YouTube quality recovery. It uses a separate mpv configuration, so your normal player settings stay unchanged.
 

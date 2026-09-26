@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {captureVideo, pauseVideos} from '../extension/capture.js';
+import {captureVideo, finishPause, pauseVideos} from '../extension/capture.js';
 import {defaults, normalize, sameVideo} from '../extension/settings.js';
 
 assert.deepEqual(normalize({quality: 999, resume: 'yes', autoContinue: 'true'}), defaults);
@@ -9,6 +9,7 @@ assert.equal(sameVideo('https://youtu.be/abc?t=7', 'https://www.youtube.com/watc
 assert.equal(sameVideo('https://youtube.com.evil.test/watch?v=abc', 'https://www.youtube.com/watch?v=abc'), false);
 assert.equal(sameVideo('https://www.youtube.com/watch?v=abc', 'https://www.youtube.com/watch?v=other'), false);
 let paused = 0,
+  resumed = 0,
   tabUrl = 'https://www.youtube.com/watch?v=abc',
   settings = {},
   fail = false,
@@ -16,18 +17,24 @@ let paused = 0,
 let latest,
   gate,
   navigateOnPause = false,
+  inaccessibleFrame = false,
   calls = [];
 const statuses = [];
-globalThis.window = {top: {location: {href: tabUrl}}};
-globalThis.document = {
-  querySelectorAll: () => [
-    {
-      pause() {
-        paused++;
-      },
-    },
-  ],
+const pageVideo = {
+  paused: false,
+  isConnected: true,
+  ended: false,
+  pause() {
+    paused++;
+    this.paused = true;
+  },
+  async play() {
+    resumed++;
+    this.paused = false;
+  },
 };
+globalThis.window = {top: {location: {href: tabUrl}}};
+globalThis.document = {querySelectorAll: () => [pageVideo]};
 globalThis.chrome = {
   runtime: {
     id: 'fixture',
@@ -41,7 +48,7 @@ globalThis.chrome = {
     async sendNativeMessage(name, value) {
       calls.push('native');
       assert.equal(name, 'frameferry');
-      assert.equal(paused, 0);
+      assert.equal(paused, settings.pause === false ? 0 : 1);
       latest = value;
       if (gate) await gate;
       if (fail) return {ok: false, message: 'could not play'};
@@ -70,9 +77,13 @@ globalThis.chrome = {
   scripting: {
     async executeScript({target, func, args = []}) {
       if (target.allFrames) {
-        calls.push('pause');
-        if (navigateOnPause) window.top.location.href = 'https://www.youtube.com/watch?v=other';
-        return [{result: func(...args)}];
+        if (func === pauseVideos) {
+          calls.push('pause');
+          if (navigateOnPause) window.top.location.href = 'https://www.youtube.com/watch?v=other';
+        } else calls.push('finish');
+        const result = [{result: await func(...args)}];
+        if (inaccessibleFrame && func === pauseVideos) result.push({result: false});
+        return result;
       }
       return [{result: captured}];
     },
@@ -84,12 +95,14 @@ const {launch} = await import('../extension/background.js');
 assert.equal((await launch(1)).ok, true);
 assert.equal(latest.position, 42);
 assert.equal(latest.quality, 2160);
-assert.deepEqual(calls, ['native', 'pause']);
+assert.deepEqual(calls, ['pause', 'native', 'finish']);
 assert.equal(paused, 1);
+assert.equal(pageVideo.paused, true);
 assert.equal(statuses[0].pending, true);
 assert.equal(statuses[0].page, tabUrl);
 assert.equal(statuses.at(-1).pending, false);
 paused = 0;
+pageVideo.paused = false;
 calls = [];
 settings = {pause: false};
 assert.equal((await launch(1, {resume: false, quality: 720})).ok, true);
@@ -97,33 +110,75 @@ assert.equal(latest.position, 0);
 assert.equal(paused, 0);
 assert.equal(latest.quality, 720);
 settings = {};
+pageVideo.paused = false;
+inaccessibleFrame = true;
+paused = 0;
+const partial = await launch(1);
+assert.equal(partial.ok, true);
+assert.match(partial.message, /Some browser frames/);
+inaccessibleFrame = false;
+paused = 0;
+pageVideo.paused = false;
 navigateOnPause = true;
 const changed = await launch(1);
-assert.equal(changed.ok, true);
+assert.equal(changed.ok, false);
 assert.equal(paused, 0);
-assert.match(changed.message, /could not be verified/);
+assert.match(changed.message, /page changed/);
 navigateOnPause = false;
 window.top.location.href = tabUrl;
+pageVideo.paused = false;
 fail = true;
 assert.equal((await launch(1)).ok, false);
-assert.equal(paused, 0);
+assert.equal(paused, 1);
+assert.equal(resumed, 1, 'startup failure did not resume the original video');
+assert.equal(pageVideo.paused, false);
 fail = false;
+paused = 0;
 captured = {position: 99, page: 'https://www.youtube.com/watch?v=other'};
 await launch(1);
 assert.equal(latest.position, null);
 paused = 0;
+pageVideo.paused = false;
+captured = {position: 42.625, page: tabUrl};
 let release;
 gate = new Promise((resolve) => {
   release = resolve;
 });
 const first = launch(1);
 await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(pageVideo.paused, true, 'browser kept playing while mpv started');
+assert.equal(latest.position, 42.625, 'handoff rounded away the paused position');
+captured.position = 53;
 assert.equal((await launch(1)).ok, false);
 tabUrl = 'https://www.youtube.com/watch?v=new';
+window.top.location.href = tabUrl;
 release();
 assert.equal((await first).ok, true);
-assert.equal(paused, 0);
+assert.equal(resumed, 1, 'handoff resumed a video after navigation');
 gate = null;
+paused = 0;
+pageVideo.paused = false;
+captured = {position: 66.25, page: tabUrl};
+gate = new Promise((resolve) => {
+  release = resolve;
+});
+const failing = launch(1);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(pageVideo.paused, true);
+fail = true;
+release();
+assert.equal((await failing).ok, false);
+assert.equal(resumed, 2, 'a delayed startup failure left the browser paused');
+assert.equal(pageVideo.paused, false);
+fail = false;
+gate = null;
+settings = {pause: false};
+paused = 0;
+fail = true;
+assert.equal((await launch(1)).ok, false);
+assert.equal(paused, 0, 'disabling browser pausing was ignored');
+fail = false;
+settings = {};
 assert.equal(
   chrome.runtime.onMessage.fn({action: 'play'}, {id: 'other', url: 'https://evil.test'}, () => {}),
   false,
@@ -140,6 +195,7 @@ const reply = await new Promise((resolve) =>
   ),
 );
 assert.deepEqual(reply, captured);
+paused = 0;
 
 const savedTop = window.top;
 Object.defineProperty(window, 'top', {
@@ -151,6 +207,19 @@ Object.defineProperty(window, 'top', {
 assert.equal(pauseVideos(tabUrl), false);
 assert.equal(paused, 0);
 Object.defineProperty(window, 'top', {configurable: true, value: savedTop});
+pageVideo.paused = true;
+assert.equal(pauseVideos(tabUrl), true);
+assert.equal(await finishPause(tabUrl, true), true);
+assert.equal(resumed, 2, 'an already paused video was resumed');
+pageVideo.paused = false;
+assert.equal(pauseVideos(tabUrl), true);
+assert.equal(await finishPause(tabUrl, true), true);
+assert.equal(resumed, 3, 'the original playing state was not restored');
+const originalPlay = pageVideo.play;
+pageVideo.play = () => Promise.reject(Error('autoplay denied'));
+assert.equal(pauseVideos(tabUrl), true);
+assert.equal(await finishPause(tabUrl, true), false, 'a blocked browser resume was reported as successful');
+pageVideo.play = originalPlay;
 
 const video = (area, time, extra = {}) => ({
   readyState: 4,
@@ -168,6 +237,8 @@ globalThis.document = {
   querySelectorAll: () => [video(0, 9), video(100, 20), video(1000, 40)],
 };
 assert.equal(captureVideo().position, 40);
+document.querySelectorAll = () => [video(1000, 40.625)];
+assert.equal(captureVideo().position, 40.625);
 let layoutReads = 0;
 const candidates = Array.from({length: 100}, (_, i) =>
   video(i + 1, i, {

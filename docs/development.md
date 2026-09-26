@@ -13,14 +13,14 @@ tests/               Offline fixtures and regression tests
 ```
 
 ```text
-Browser action → extension → native host → mpv → yt-dlp
-                            ← playback confirmation
-Browser pause ← extension
+Browser action → capture and pause → native host → mpv → yt-dlp
+                                        ← playback confirmation
+Failure → resume videos paused on the original page
 ```
 
 The extension is plain Manifest V3 JavaScript with no runtime npm dependencies or build step. Python runtime code uses only the standard library. Development dependencies stay outside the installed extension and native host.
 
-The native host accepts a fixed schema: URL, position, resolution limit, and fullscreen. It does not accept shell commands or arbitrary mpv arguments. It confirms playback through mpv IPC before the browser pauses.
+The native host accepts a fixed schema: URL, position, resolution limit, and fullscreen. It does not accept shell commands or arbitrary mpv arguments. It confirms playback through mpv IPC; the browser pauses before startup when that setting is enabled, and resumes its original playing videos if startup fails.
 
 YouTube recovery state is separate for each player. Retained metadata uses an unlinked file descriptor. Worker cleanup and descriptor access require Linux. Account access and background updates are local opt-ins.
 
@@ -75,7 +75,7 @@ Use the normal popup with a recorded video. Local HTTP fixtures must support byt
 - Continue from a known position; compare mpv's start position.
 - Start from zero despite saved history.
 - Change default and per-launch resolutions separately.
-- Confirm pausing only after success, and no pause when disabled or startup fails.
+- Confirm pausing before startup, resuming only previously playing videos on failure, and no pause when disabled.
 - Navigate during startup; the new page must stay playing.
 - Reopen the popup during a handoff and check the status and disabled buttons.
 - Check restricted pages, unavailable positions, and embedded videos.

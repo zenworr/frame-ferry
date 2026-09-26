@@ -31,7 +31,7 @@ async function send(resume) {
   if (busy || pending || !allowed) return;
   busy = true;
   buttons();
-  report('Opening mpv… The browser keeps playing until mpv is ready.');
+  report(preferences.pause ? 'Pausing browser while mpv starts…' : 'Opening mpv…');
   try {
     const response = await chrome.runtime.sendMessage({
       action: 'play',
@@ -84,7 +84,7 @@ async function init() {
   allowed = /^https?:\/\//i.test(tab?.url || '');
   captured = allowed ? await chrome.runtime.sendMessage({action: 'inspect', tabId: tab.id}) : null;
   $('position').textContent = captured
-    ? `At ${Math.floor(captured.position / SECONDS_PER_MINUTE)}:${String(captured.position % SECONDS_PER_MINUTE).padStart(CLOCK_DIGITS, '0')} · captured again when you click`
+    ? `At ${Math.floor(captured.position / SECONDS_PER_MINUTE)}:${String(Math.floor(captured.position % SECONDS_PER_MINUTE)).padStart(CLOCK_DIGITS, '0')} · captured again when you click`
     : 'No recorded-video position found. Open uses the URL or saved position.';
   labels();
   buttons();

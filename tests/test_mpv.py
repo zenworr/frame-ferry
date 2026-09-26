@@ -157,6 +157,7 @@ class MpvTests(unittest.TestCase):
         for timestamp, routes, route in (
             (30, {}, 'primary'),
             (0, {'primary': 'fail'}, 'authenticated'),
+            (30.625, {}, 'primary'),
             (None, {}, 'primary'),
         ):
             with self.subTest(timestamp=timestamp), tempfile.TemporaryDirectory() as history:

@@ -104,7 +104,7 @@ def command_for(message, ipc, config=None):
                 for k, v in parse_qsl(parts.query, keep_blank_values=True)
                 if k not in ('t', 'start', 'time_continue')
             ]
-            query.append(('t', str(int(position))))
+            query.append(('t', str(position)))
             url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ''))
         # Entry-local options must not affect a later video opened in this player.
         command += ['--{', f'--start={position}', url, '--}']

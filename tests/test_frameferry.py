@@ -72,9 +72,11 @@ class NativeTests(unittest.TestCase):
             patch.object(native, 'STATE', player.root / ('native-state-' + 'x' * 80)),
             patch.object(native, 'wait_for_playback', side_effect=probe),
         ):
-            reply = native.handle(request(url=f'http://127.0.0.1:{player.server.server_port}/audio.wav', quality=0))
+            reply = native.handle(
+                request(url=f'http://127.0.0.1:{player.server.server_port}/audio.wav', position=30.625, quality=0)
+            )
         self.assertTrue(reply['ok'])
-        self.assertAlmostEqual(observed[0], 30, delta=0.2)
+        self.assertAlmostEqual(observed[0], 30.625, delta=0.2)
 
     @unittest.skipUnless(shutil.which('mpv'), 'mpv is required')
     def test_native_reports_the_safe_player_failure_reason(self):
@@ -128,6 +130,9 @@ class NativeTests(unittest.TestCase):
         self.assertIn('--ytdl-format=bestvideo[height<=?1080]+bestaudio/best[height<=?1080]', command)
         self.assertIn('--fullscreen=no', command)
         self.assertIn('--script-opts-append=thumbfast-mpv_path=/usr/bin/mpv', command)
+        with patch.object(native, 'executable', return_value='/usr/bin/mpv'):
+            precise = native.command_for(request(position=42.625), Path('/tmp/socket'))
+        self.assertEqual(precise[-3:], ['--start=42.625', 'https://www.youtube.com/watch?v=fixture&t=42.625', '--}'])
 
     def test_null_position_preserves_url_and_player_history(self):
         with patch.object(native, 'executable', return_value='mpv'):

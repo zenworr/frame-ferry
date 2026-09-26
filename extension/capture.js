@@ -19,7 +19,7 @@ export function captureVideo() {
   }
   if (!video || !Number.isFinite(video.duration) || video.duration <= 0 || !Number.isFinite(video.currentTime))
     return null;
-  return {position: Math.floor(video.currentTime), page: location.href};
+  return {position: video.currentTime, page: location.href};
 }
 export function pauseVideos(expectedPage) {
   // A navigation can occur after the background script checks the tab.
@@ -28,6 +28,27 @@ export function pauseVideos(expectedPage) {
   } catch {
     return false;
   }
-  for (const video of document.querySelectorAll('video')) video.pause();
+  const playing = [];
+  window.__frameFerryPausedVideos = playing;
+  for (const video of document.querySelectorAll('video')) {
+    if (!video.paused) {
+      playing.push(video);
+      video.pause();
+    }
+  }
   return true;
+}
+export async function finishPause(expectedPage, resume) {
+  const playing = window.__frameFerryPausedVideos || [];
+  window.__frameFerryPausedVideos = null;
+  if (!resume || playing.length === 0) return true;
+  try {
+    if (window.top.location.href !== expectedPage) return false;
+  } catch {
+    return false;
+  }
+  const results = await Promise.allSettled(
+    playing.filter((video) => video.isConnected && video.paused && !video.ended).map((video) => video.play()),
+  );
+  return results.every((result) => result.status === 'fulfilled');
 }

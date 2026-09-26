@@ -209,10 +209,10 @@ mp.add_hook("on_load", HOOK.prepare, function()
     mode = next_mode or "primary"
     if not next_mode then
         resume_position = nil
-        -- Browser handoff uses whole seconds; explicit URL time takes precedence over watch history.
+        -- Explicit URL time takes precedence over watch history, including fractional handoff positions.
         local query = is_youtube(path) and path:match("%?([^#]*)") or ""
         for part in query:gmatch("[^&]+") do
-            local position = tonumber(part:match("^t=(%d+)$"))
+            local position = tonumber(part:match("^t=(%d+%.?%d*)$"))
             if position and position < math.huge then
                 resume_position = position
                 break
