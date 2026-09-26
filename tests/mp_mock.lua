@@ -68,6 +68,7 @@ return function(script, overrides)
     function p.observe(name, value) set(name, value); dispatch(p.observers, name, name, value) end
     local env = setmetatable({mp = mp, io = overrides.io or io, require = function(name)
         if name == "mp.msg" then return msg end
+        if name == "mp.utils" then return overrides.utils end
         if name == "mp.options" then return {read_options = function(options)
             for k, v in pairs(overrides.options or {}) do options[k] = v end
         end} end

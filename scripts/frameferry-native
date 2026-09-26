@@ -54,11 +54,13 @@ def validate(message):
 
 def command_for(message, ipc, config=None):
     config = load_config() if config is None else config
-    command = [executable(config, 'mpv'), f'--config-dir={CONFIG}', f'--input-ipc-server={ipc}',
+    mpv = executable(config, 'mpv')
+    command = [mpv, f'--config-dir={CONFIG}', f'--input-ipc-server={ipc}',
                '--idle=no', '--terminal=yes', '--input-terminal=no', '--term-osd=no',
                '--term-status-msg=', '--msg-color=no', '--msg-level=all=info',
                '--fullscreen=' + ('yes' if message['fullscreen'] else 'no'),
-               f'--script-opts-append=youtube-recovery_timeout={config["recovery_timeout"]}']
+               f'--script-opts-append=youtube-recovery_timeout={config["recovery_timeout"]}',
+               f'--script-opts-append=thumbfast-mpv_path={mpv}']
     height = message['quality']
     if height:
         command.append(f'--ytdl-format=bestvideo[height<=?{height}]+bestaudio/best[height<=?{height}]')
@@ -109,7 +111,8 @@ def wait_for_playback(process, path, deadline):
                         return event.get('data')
             while time.monotonic() < deadline:
                 if property_value('user-data/youtube-quality/slate'):
-                    raise RuntimeError('No playable stream was found. Try another quality or continue in the browser.')
+                    reason = property_value('user-data/youtube-quality/error')
+                    raise RuntimeError(reason or 'No playable stream was found. Try another quality or continue in the browser.')
                 position = property_value('time-pos')
                 if position is not None and not property_value('user-data/youtube-quality/loading') and not property_value('seeking'):
                     return
@@ -139,7 +142,7 @@ def handle(message):
                                        env=proxy_environment(config))
         try:
             wait_for_playback(process, ipc, time.monotonic() + config['startup_timeout'])
-        except Exception:
+        except Exception as error:
             if process.poll() is None:
                 process.terminate()
                 try:
@@ -147,7 +150,7 @@ def handle(message):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-            raise
+            raise RuntimeError(f'{error}\nPlayer log: {output.name}') from None
     return {'ok': True, 'message': 'mpv is playing.', 'pid': process.pid}
 
 

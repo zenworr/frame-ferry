@@ -20,20 +20,30 @@ URL = 'https://youtu.be/offline'
 
 
 class Player:
-    def __init__(self, routes=None, duplicates=False, options=(), provider=True, url=URL):
+    def __init__(self, routes=None, duplicates=False, options=(), provider=True, url=URL, media_seconds=60):
         self.temp = tempfile.TemporaryDirectory(prefix='mpv-test-')
         self.root = Path(self.temp.name)
         self.process = self.socket = self.reader = self.server = self.thread = None
+        self.buffer_release = buffer_release = threading.Event()
         try:
             data = io.BytesIO()
             with wave.open(data, 'wb') as audio:
                 audio.setnchannels(1)
                 audio.setsampwidth(2)
                 audio.setframerate(8000)
-                audio.writeframes(b'\0' * (60 * 8000 * 2))
+                audio.writeframes(b'\0' * (media_seconds * 8000 * 2))
             media = data.getvalue()
+            self.requests = requests = []
 
             class Handler(BaseHTTPRequestHandler):
+                protocol_version = 'HTTP/1.1'
+
+                def handle(self):
+                    try:
+                        super().handle()
+                    except ConnectionResetError:
+                        pass
+
                 def log_message(self, *_args):
                     pass
 
@@ -53,15 +63,20 @@ class Player:
                                 self.wfile.write(b'0123456789')
                                 self.wfile.flush()
                                 time.sleep(.1)
-                        start = int(self.headers.get('Range', 'bytes=0-').split('=')[1].split('-')[0])
-                        self.send_response(206 if start else 200)
+                        requested = self.headers.get('Range', 'bytes=0-')
+                        requests.append((requested, self.client_address[1]))
+                        first, last = requested.split('=')[1].split('-')
+                        start = int(first)
+                        end = min(int(last), len(media) - 1) if last else len(media) - 1
+                        self.send_response(206)
                         self.send_header('Content-Type', 'audio/wav')
-                        self.send_header('Content-Length', str(len(media) - start))
+                        self.send_header('Content-Length', str(end - start + 1))
                         self.send_header('Accept-Ranges', 'bytes')
-                        if start:
-                            self.send_header('Content-Range', f'bytes {start}-{len(media)-1}/{len(media)}')
+                        self.send_header('Content-Range', f'bytes {start}-{end}/{len(media)}')
                         self.end_headers()
-                        self.wfile.write(media[start:])
+                        if self.path == '/buffer' and 1024 * 1024 <= start < len(media) - 65536:
+                            buffer_release.wait()
+                        self.wfile.write(media[start:end+1])
                     except (BrokenPipeError, ConnectionResetError):
                         pass
 
@@ -96,7 +111,7 @@ if 't' in query: info['start_time'] = float(query['t'][0])
 if isinstance(action, dict):
     info.update(action)
     action = info.pop('media', 'audio.wav')
-info['url'] = 'http://127.0.0.1:{self.server.server_port}/' + (action if action in ('stall', 'denied', 'header') else 'audio.wav')
+info['url'] = 'http://127.0.0.1:{self.server.server_port}/' + (action if action in ('stall', 'denied', 'header', 'buffer') else 'audio.wav')
 print(json.dumps(info))
 ''')
             self.extractor.chmod(0o755)
@@ -184,6 +199,7 @@ end)
                  and self.get('duration') is not None and self.get('user-data/test/ready'))
 
     def close(self):
+        self.buffer_release.set()
         if self.process and self.process.poll() is None:
             self.process.terminate()
             try:

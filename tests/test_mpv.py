@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import time
@@ -28,6 +29,53 @@ class MpvTests(unittest.TestCase):
         self.assertEqual(p.get('playlist-count'), 2)
         self.assertEqual((p.root / 'calls').read_text().splitlines(),
                          ['primary', 'authenticated', 'primary', 'authenticated'])
+
+    def test_youtube_transport_and_cache_in_real_mpv(self):
+        p = self.player({'primary': {'protocol': 'http'}}, media_seconds=180,
+                        options=(f'--include={ROOT}/config/mpv/mpv.conf', '--vo=null', '--ao=null', '--pause=yes',
+                                 '--save-position-on-quit=no', '--no-resume-playback'))
+        p.wait_loaded('primary')
+        self.assertEqual(p.get('options/network-timeout'), 60)
+        self.assertGreater(p.get('options/cache-secs'), 180)
+        self.assertEqual(p.get('options/demuxer-max-bytes'), 300 * 1024 * 1024)
+        p.wait(lambda: (p.get('demuxer-cache-duration') or 0) > 60)
+        version = re.match(r'^n?(\d+)\.', p.get('ffmpeg-version'))
+        if not version or int(version[1]) < 9:
+            self.assertNotIn('request_size', p.get('options/stream-lavf-o'))
+            return
+        p.wait(lambda: len(p.requests) >= 3)
+        for requested, _port in p.requests:
+            first, last = requested.split('=')[1].split('-')
+            self.assertTrue(last, 'unbounded request used for YouTube media')
+            self.assertLessEqual(int(last) - int(first) + 1, 1024 * 1024)
+        self.assertEqual(len({port for _, port in p.requests}), 1, 'HTTP connection was not reused')
+        other = f'http://127.0.0.1:{p.server.server_port}/audio.wav'
+        p.command('loadfile', other)
+        p.wait(lambda: p.get('user-data/test/ready') and p.get('path') == other)
+        self.assertNotIn('request_size', p.get('options/stream-lavf-o'), 'YouTube transport options leaked to another site')
+
+    def test_sustained_buffering_recovers_automatically_at_the_same_position(self):
+        p = self.player({'primary': {'protocol': 'http', 'media': 'buffer'}},
+                        media_seconds=180, options=('--speed=20',))
+        p.wait_loaded('primary')
+        version = re.match(r'^n?(\d+)\.', p.get('ffmpeg-version'))
+        if not version or int(version[1]) < 9:
+            self.skipTest('The bounded HTTP stall fixture requires FFmpeg 9+')
+        p.wait(lambda: p.get('paused-for-cache'), timeout=8)
+        position = p.get('time-pos')
+        started = time.monotonic()
+        self.assertFalse(p.get('pause'))
+        self.assertFalse(p.get('seeking'))
+        p.wait(lambda: len((p.root / 'calls').read_text().splitlines()) > 1, timeout=13)
+        elapsed = time.monotonic() - started
+        p.wait_loaded('authenticated')
+        self.assertGreater(elapsed, 9)
+        self.assertLess(elapsed, 13)
+        self.assertAlmostEqual(float(p.get('file-local-options/start')), position, delta=.5)
+        self.assertGreaterEqual(p.get('time-pos'), position - .5)
+        self.assertEqual((p.root / 'calls').read_text().splitlines(), ['primary', 'authenticated'])
+        self.assertEqual(p.get('playlist-count'), 1)
+        self.assertFalse(p.get('pause'))
 
     def test_error_screen_and_manual_retry(self):
         p = self.player({'*': 'fail'})

@@ -6,7 +6,7 @@ if recovery_timeout ~= recovery_timeout or recovery_timeout < 10 or recovery_tim
 local timeout_scale = recovery_timeout / 30
 
 local next_mode, mode, youtube_url, failed, unsupported, pause_before_error
-local timer, timed_out, started, loaded, use_cookies, requires_auth, last_position, resume_position
+local timer, buffer_timer, live_stream, timed_out, started, loaded, use_cookies, requires_auth, last_position, resume_position
 local showing_slate, announced_size, playlist_entry, selected_format, candidate_path, candidate_file
 local slate = mp.create_osd_overlay("ass-events")
 local marker = "YouTube post-live DASH fragments lack reliable timing"
@@ -36,11 +36,42 @@ local function cancel_timer()
     if timer then timer:kill(); timer = nil end
 end
 
+local function cancel_buffer_timer()
+    if buffer_timer then buffer_timer:kill(); buffer_timer = nil end
+end
+
 local function abort_load(target)
-    if not youtube_url or (target ~= "primary" and (loaded or showing_slate)) then return end
+    if not youtube_url or (target ~= "primary" and showing_slate) then return end
     cancel_timer()
+    cancel_buffer_timer()
     next_mode, timed_out = target, true
     mp.commandv("stop", "keep-playlist")
+end
+
+local function is_buffering()
+    return youtube_url and loaded and not showing_slate and not live_stream
+        and mp.get_property_bool("demuxer-via-network", false)
+        and mp.get_property_number("duration", 0) > 0
+        and mp.get_property_bool("paused-for-cache", false)
+        and not mp.get_property_bool("pause", false) and not mp.get_property_bool("seeking", false)
+end
+
+local function watch_buffering()
+    if not is_buffering() then
+        cancel_buffer_timer()
+    elseif not buffer_timer then
+        buffer_timer = mp.add_timeout(10, function()
+            buffer_timer = nil
+            if not is_buffering() then return end
+            msg.warn("Playback stalled while buffering; trying the next recovery route")
+            mp.set_property("user-data/youtube-quality/error", "Playback stalled while buffering.")
+            -- Continue the recovery ladder instead of retrying the same slow stream forever.
+            abort_load(nil)
+        end)
+    end
+end
+for _, property in ipairs({"paused-for-cache", "pause", "seeking"}) do
+    mp.observe_property(property, "bool", watch_buffering)
 end
 
 local function clear_candidate()
@@ -51,6 +82,8 @@ mp.register_event("shutdown", clear_candidate)
 
 mp.add_hook("on_load", 5, function()
     cancel_timer()
+    cancel_buffer_timer()
+    live_stream = false
     slate:remove()
     local path = mp.get_property("path", "")
     local entry = mp.get_property(string.format("playlist/%d/id", mp.get_property_number("playlist-pos", 0)))
@@ -108,6 +141,7 @@ mp.add_hook("on_load", 5, function()
         return
     end
 
+    mp.set_property("user-data/youtube-quality/error", "")
     -- Reserve time for a usable fallback, including a short availability wait.
     local budget = math.min(budgets[mode] * timeout_scale, remaining - ((mode == "fallback" or mode == "retained") and 0 or 7 * timeout_scale))
     local raw = mp.get_property_native("options/ytdl-raw-options", {})
@@ -123,13 +157,15 @@ mp.add_hook("on_load", 5, function()
     raw["frameferry-candidate"] = mode == "retained" and candidate_path or nil
     raw["frameferry-timeout"] = tostring(math.max(0.1, budget - 0.5 * timeout_scale))
     mp.set_property_native("file-local-options/ytdl-raw-options", raw)
-    mp.set_property_number("file-local-options/network-timeout", 4 * timeout_scale)
     if resume_position then mp.set_property("file-local-options/start", tostring(resume_position)) end
     mp.set_property_bool("user-data/youtube-quality/loading", true)
     msg.info(notices[mode])
     mp.osd_message(notices[mode] .. "\nAlt+q: fast fallback    Ctrl+b: browser", budget)
     -- Bound extraction and media opening, including HLS segment retry loops.
-    timer = mp.add_timeout(budget, function() abort_load(following[mode]) end)
+    timer = mp.add_timeout(budget, function()
+        mp.set_property("user-data/youtube-quality/error", "Loading exceeded the recovery time limit.")
+        abort_load(following[mode])
+    end)
 end)
 
 mp.add_hook("on_load", 15, function()
@@ -156,6 +192,32 @@ mp.add_hook("on_load", 15, function()
     mp.set_property("stream-open-filename", "memory://")
 end)
 
+mp.add_hook("on_load", 20, function()
+    if not youtube_url or showing_slate then return end
+    local result = mp.get_property_native("user-data/mpv/ytdl/json-subprocess-result")
+    if type(result) ~= "table" or result.status ~= 0 or type(result.stdout) ~= "string" then return end
+    local info = require("mp.utils").parse_json(result.stdout)
+    if type(info) ~= "table" then return end
+    live_stream = info.is_live or info.live_status == "is_live" or info.live_status == "post_live"
+        or info.live_status == "is_upcoming"
+    if live_stream then return end
+    -- Bounded HTTP requests require FFmpeg 9 or newer.
+    local version = tonumber(mp.get_property("ffmpeg-version", ""):match("^n?(%d+)%.")) or 0
+    if version < 9 then return end
+    local formats = info.requested_formats or info.requested_downloads or {info}
+    if #formats == 0 then return end
+    for _, format in ipairs(formats) do
+        if (format.protocol ~= "http" and format.protocol ~= "https") or format.fragments
+            or type(format.url) ~= "string" or not format.url:match("^https?://") then return end
+    end
+    -- yt-dlp's downloader chunk size does not carry over to mpv's media reader.
+    local stream = mp.get_property_native("file-local-options/stream-lavf-o", {})
+    for key, value in pairs({request_size = "1048576", multiple_requests = "1", short_seek_size = "1048576"}) do
+        if stream[key] == nil then stream[key] = value end
+    end
+    mp.set_property_native("file-local-options/stream-lavf-o", stream)
+end)
+
 mp.observe_property("user-data/mpv/ytdl/json-subprocess-result", "native", function(_, result)
     if type(result) == "table" and type(result.stderr) == "string" then
         unsupported = result.stderr:find(marker, 1, true) ~= nil
@@ -163,6 +225,20 @@ mp.observe_property("user-data/mpv/ytdl/json-subprocess-result", "native", funct
         requires_auth = requires_auth or err:find("sign in", 1, true) ~= nil
             or err:find("log in", 1, true) ~= nil or err:find("members-only", 1, true) ~= nil
             or err:find("private video", 1, true) ~= nil
+        if result.status ~= 0 then
+            local reason
+            if err:find("http error 429", 1, true) or err:find("too many requests", 1, true) then
+                reason = "YouTube is limiting requests. Wait before trying again."
+            elseif err:find("sign in", 1, true) or err:find("log in", 1, true)
+                or err:find("members-only", 1, true) or err:find("private video", 1, true) then
+                reason = "YouTube requested account access. Check browser-cookie settings or continue in the browser."
+            elseif err:find("extraction timed out", 1, true) then
+                reason = "YouTube extraction timed out."
+            elseif err:find("requested format is not available", 1, true) then
+                reason = "The requested video format is unavailable."
+            end
+            if reason then mp.set_property("user-data/youtube-quality/error", reason) end
+        end
     end
 end)
 
@@ -184,6 +260,7 @@ mp.observe_property("video-params", "native", show_quality)
 
 mp.register_event("end-file", function(event)
     cancel_timer()
+    cancel_buffer_timer()
     mp.set_property_bool("user-data/youtube-quality/loading", false)
     failed = youtube_url ~= nil and event.reason ~= "quit"
         and ((event.reason == "error" and not showing_slate) or timed_out)
@@ -194,6 +271,7 @@ mp.register_event("end-file", function(event)
             resume_position = last_position or resume_position
         end
     end
+    loaded = false
 end)
 
 -- This hook runs before mpv chooses its next file or exits.
@@ -214,6 +292,7 @@ mp.register_event("file-loaded", function()
     cancel_timer()
     clear_candidate()
     loaded = true
+    watch_buffering()
     mp.set_property_bool("user-data/youtube-quality/loading", false)
     if not youtube_url then return end
     mp.osd_message("")
@@ -224,8 +303,9 @@ mp.register_event("file-loaded", function()
     mp.set_property_bool("pause", true)
     slate.res_x, slate.res_y = 1280, 720
     local title = mode == "browser" and "Continue in browser" or "YouTube playback failed"
-    local detail = mode == "browser" and "Loading stopped. Press Ctrl+r to return to mpv."
-        or "No usable stream within the load budget."
+    local detail = mp.get_property("user-data/youtube-quality/error", "")
+    if mode == "browser" then detail = "Loading stopped. Press Ctrl+r to return to mpv."
+    elseif detail == "" then detail = "No usable stream within the load budget." end
     slate.data = "{\\an5\\pos(640,320)\\fs36\\bord1}" .. title ..
         "\\N{\\fs23}Ctrl+r: retry    Ctrl+b: open in browser" .. "\\N{\\fs19}" .. detail
     slate:update()

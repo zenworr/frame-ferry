@@ -9,7 +9,7 @@ assert.equal(sameVideo('https://youtu.be/abc?t=7', 'https://www.youtube.com/watc
 assert.equal(sameVideo('https://youtube.com.evil.test/watch?v=abc', 'https://www.youtube.com/watch?v=abc'), false);
 assert.equal(sameVideo('https://www.youtube.com/watch?v=abc', 'https://www.youtube.com/watch?v=other'), false);
 let paused = 0, tabUrl = 'https://www.youtube.com/watch?v=abc', settings = {}, fail = false, captured = {position: 42, page: tabUrl};
-let latest, gate, navigateOnPause = false, calls = [];
+let latest, gate, navigateOnPause = false, calls = [], statuses = [];
 globalThis.window = {top: {location: {href: tabUrl}}};
 globalThis.document = {querySelectorAll: () => [{pause() { paused++; }}]};
 globalThis.chrome = {
@@ -20,7 +20,7 @@ globalThis.chrome = {
    if (fail) return {ok: false, message: 'could not play'};
    return {ok: true};
   }},
- storage: {local: {async get() { return {preferences: settings}; }}, session: {async set() {}, async remove() {}}},
+ storage: {local: {async get() { return {preferences: settings}; }}, session: {async set(value) { statuses.push(value['status:1']); }, async remove() {}}},
  tabs: {async get() { return {url: tabUrl}; }, onRemoved: {addListener() {}}},
  scripting: {async executeScript({target, func, args = []}) {
    if (target.allFrames) {
@@ -38,6 +38,9 @@ assert.equal((await launch(1)).ok, true);
 assert.equal(latest.position, 42); assert.equal(latest.quality, 2160);
 assert.deepEqual(calls, ['native', 'pause']);
 assert.equal(paused, 1);
+assert.equal(statuses[0].pending, true);
+assert.equal(statuses[0].page, tabUrl);
+assert.equal(statuses.at(-1).pending, false);
 paused = 0; calls = []; settings = {pause: false};
 assert.equal((await launch(1, {resume: false, quality: 720})).ok, true);
 assert.equal(latest.position, 0); assert.equal(paused, 0); assert.equal(latest.quality, 720);
@@ -77,17 +80,18 @@ document.querySelector = () => ({}); assert.equal(captureVideo(), null);
 document.querySelector = () => null; document.querySelectorAll = () => [video(1000, 40, {duration: Infinity})];
 assert.equal(captureVideo(), null);
 let popupCount = 0;
-async function openPopup(preferences = {}, url = 'https://example.org/video', playResponse = {ok: true, message: 'Ready'}) {
+async function openPopup(preferences = {}, url = 'https://example.org/video', playResponse = {ok: true, message: 'Ready'}, status = null) {
  const elements = new Map();
  globalThis.document = {getElementById(id) {
   if (!elements.has(id)) elements.set(id, {checked: false, disabled: true, value: '',
    classList: {toggle() {}}, listeners: {}, addEventListener(event, handler) { this.listeners[event] = handler; }});
   return elements.get(id);
  }};
- const messages = [], saved = [];
+ const messages = [], saved = [], changed = [];
  globalThis.chrome = {
-  storage: {local: {async get() { return {preferences}; }, async set(value) { saved.push(value.preferences); }},
-   session: {async get() { return {}; }}},
+  storage: {onChanged: {addListener(fn) { changed.push(fn); }},
+   local: {async get() { return {preferences}; }, async set(value) { saved.push(value.preferences); }},
+   session: {async get() { return {'status:7': status}; }}},
   tabs: {async query() { return [{id: 7, title: 'Video', url}]; }},
   runtime: {async sendMessage(message) {
    messages.push(message);
@@ -96,7 +100,8 @@ async function openPopup(preferences = {}, url = 'https://example.org/video', pl
  };
  await import(`../extension/popup.js?test=${++popupCount}`);
  await new Promise(resolve => setImmediate(resolve));
- return {elements, saved, plays: () => messages.filter(message => message.action === 'play')};
+ return {elements, saved, plays: () => messages.filter(message => message.action === 'play'),
+  status(value) { for (const fn of changed) fn({'status:7': {newValue: value}}, 'session'); }};
 }
 let popup = await openPopup();
 assert.equal(popup.elements.get('autoContinue').checked, false);
@@ -127,4 +132,26 @@ popup.elements.get('autoContinue').checked = false;
 await popup.elements.get('autoContinue').listeners.change();
 popup = await openPopup(popup.saved[0]);
 assert.equal(popup.plays().length, 0);
+const page = 'https://example.org/video';
+const opening = {page, text: 'Opening mpv', pending: true};
+popup = await openPopup({autoContinue: true}, page, undefined, opening);
+assert.equal(popup.plays().length, 0, 'reopening a pending handoff started another request');
+assert.equal(popup.elements.get('send').disabled, true);
+assert.equal(popup.elements.get('status').textContent, 'Opening mpv');
+await popup.elements.get('alternate').listeners.click();
+assert.equal(popup.plays().length, 0);
+popup.status({page, text: 'mpv is playing.', pending: false});
+assert.equal(popup.elements.get('status').textContent, 'mpv is playing.');
+assert.equal(popup.elements.get('send').disabled, false);
+popup.status({page, text: 'Player log: /private/player.log', error: true, pending: false});
+assert.equal(popup.elements.get('status').textContent, 'Player log: /private/player.log');
+popup = await openPopup({}, 'https://example.org/other', undefined, {page, text: 'Old success', pending: false});
+assert.equal(popup.elements.get('status').textContent, '');
+popup = await openPopup({autoContinue: true}, 'https://example.org/other', undefined, opening);
+assert.equal(popup.elements.get('send').disabled, true);
+assert.equal(popup.plays().length, 0);
+assert.match(popup.elements.get('status').textContent, /still in progress/);
+popup.status({page, text: 'Old success', pending: false});
+assert.equal(popup.elements.get('send').disabled, false);
+assert.equal(popup.elements.get('status').textContent, '');
 console.log('Frame Ferry: settings, identity, timestamps, readiness, pause, navigation, duplicate requests, capture and popup passed.');

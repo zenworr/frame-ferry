@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-import {settings} from './settings.js';
+import {settings, sameVideo} from './settings.js';
 const $ = id => document.getElementById(id);
-let preferences, tab, captured, busy = false;
+let preferences, tab, captured, busy = false, pending = false, allowed = false;
 function report(message, error = false) {
   $('status').textContent = message;
   $('status').classList.toggle('error', error);
@@ -11,16 +11,25 @@ function labels() {
   $('send').textContent = preferences.resume ? resumeLabel : 'Play from the beginning ↗';
   $('alternate').textContent = preferences.resume ? 'Play from the beginning' : resumeLabel;
 }
+function buttons() {
+  $('send').disabled = $('alternate').disabled = !allowed || busy || pending;
+}
+function showStatus(state) {
+  pending = !!state?.pending;
+  buttons();
+  if (state && sameVideo(state.page, tab.url)) report(state.text, state.error);
+  else report(pending ? 'A handoff from this tab is still in progress.' : '');
+}
 async function send(resume) {
-  if (busy) return;
+  if (busy || pending || !allowed) return;
   busy = true;
-  $('send').disabled = $('alternate').disabled = true;
+  buttons();
   report('Opening mpv… The browser keeps playing until mpv is ready.');
   try {
     const response = await chrome.runtime.sendMessage({action: 'play', tabId: tab.id, resume, quality: Number($('quality').value)});
     report(response.message, !response.ok);
   } catch (error) { report(error.message, true); }
-  finally { busy = false; $('send').disabled = $('alternate').disabled = false; }
+  finally { busy = false; buttons(); }
 }
 async function init() {
   preferences = await settings();
@@ -33,7 +42,7 @@ async function init() {
         quality: Number($('default-quality').value)};
       await chrome.storage.local.set({preferences});
       labels();
-      if (!busy) report('Defaults saved on this device.');
+      if (!busy && !pending) report('Defaults saved on this device.');
     });
   }
   $('send').addEventListener('click', () => send(preferences.resume));
@@ -46,18 +55,25 @@ async function init() {
   });
   [tab] = await chrome.tabs.query({active: true, currentWindow: true});
   $('page-title').textContent = tab?.title || tab?.url || 'No active page';
-  const allowed = /^https?:\/\//i.test(tab?.url || '');
+  allowed = /^https?:\/\//i.test(tab?.url || '');
   captured = allowed ? await chrome.runtime.sendMessage({action: 'inspect', tabId: tab.id}) : null;
   $('position').textContent = captured
     ? `At ${Math.floor(captured.position / 60)}:${String(captured.position % 60).padStart(2, '0')} · captured again when you click`
     : 'No recorded-video position found. Open uses the URL or saved position.';
   labels();
-  $('send').disabled = $('alternate').disabled = !allowed;
+  buttons();
   if (!allowed) report('Open an HTTP or HTTPS video page to use Frame Ferry.', true);
   else {
-    const last = (await chrome.storage.session.get('status:' + tab.id))['status:' + tab.id];
-    if (last) report(last.text, last.error);
-    if (preferences.autoContinue) await send(true);
+    const key = 'status:' + tab.id;
+    let updated = false;
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'session' || !changes[key]) return;
+      updated = true;
+      showStatus(changes[key].newValue);
+    });
+    const last = (await chrome.storage.session.get(key))[key];
+    if (!updated) showStatus(last);
+    if (preferences.autoContinue && !pending) await send(true);
   }
 }
 init().catch(error => report(error.message, true));

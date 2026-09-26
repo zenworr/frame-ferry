@@ -65,6 +65,28 @@ class NativeTests(unittest.TestCase):
             os.kill(reply['pid'], signal.SIGTERM)
             os.waitpid(reply['pid'], 0)
 
+    @unittest.skipUnless(shutil.which('mpv'), 'mpv is required')
+    def test_native_reports_the_safe_player_failure_reason(self):
+        from mpv_harness import Player
+        player = Player({'*': 'fail'})
+        self.addCleanup(player.close)
+        player.wait(lambda: player.get('user-data/youtube-quality/slate'))
+        import time
+        with self.assertRaisesRegex(RuntimeError, 'YouTube requested account access'):
+            native.wait_for_playback(player.process, player.root / 'ipc', time.monotonic() + 2)
+
+    @unittest.skipUnless(shutil.which('mpv'), 'mpv is required')
+    def test_custom_thumbnail_executable_reaches_mpv_without_splitting_the_path(self):
+        from mpv_harness import Player
+        path = '/opt/player, with spaces/mpv'
+        with patch.object(native, 'executable', return_value=path):
+            command = native.command_for(request(), Path('/tmp/ipc'))
+        option = next(arg for arg in command if arg.startswith('--script-opts-append=thumbfast-mpv_path='))
+        player = Player(options=(option,))
+        self.addCleanup(player.close)
+        player.wait_loaded('primary')
+        self.assertEqual(player.get('options/script-opts')['thumbfast-mpv_path'], path)
+
     def test_fixed_schema_rejects_unsafe_values(self):
         for value in (None, [], request(url='file:///tmp/movie'), request(url='https://user:secret@example.org'),
                       request(url='https://example.org\n--script=evil'), request(url='https://example.org:broken'),
@@ -81,6 +103,7 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(command[-4:], ['--{', '--start=0', 'https://www.youtube.com/watch?v=fixture&t=0', '--}'])
         self.assertIn('--ytdl-format=bestvideo[height<=?1080]+bestaudio/best[height<=?1080]', command)
         self.assertIn('--fullscreen=no', command)
+        self.assertIn('--script-opts-append=thumbfast-mpv_path=/usr/bin/mpv', command)
 
     def test_null_position_preserves_url_and_player_history(self):
         with patch.object(native, 'executable', return_value='mpv'):
@@ -115,7 +138,11 @@ class NativeTests(unittest.TestCase):
                 patch.object(native, 'wait_for_playback', side_effect=TimeoutError('not ready')):
             (Path(temp) / 'mpv.conf').touch()
             spawn.return_value.poll.return_value = None
-            with self.assertRaises(TimeoutError): native.handle(request())
+            with self.assertRaises(RuntimeError) as error:
+                native.handle(request())
+            log = next((Path(temp)/'state').glob('player-*.log'))
+            self.assertIn('not ready', str(error.exception))
+            self.assertIn(str(log), str(error.exception))
             spawn.return_value.terminate.assert_called_once()
             self.assertNotIn('shell', spawn.call_args.kwargs)
             self.assertEqual(next((Path(temp)/'state').glob('player-*.log')).stat().st_mode & 0o777, 0o600)

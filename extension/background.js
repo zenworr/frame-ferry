@@ -18,8 +18,8 @@ function publicError(error) {
   }
   return message;
 }
-async function status(tabId, text, error = false) {
-  await chrome.storage.session.set({['status:' + tabId]: {text, error}});
+async function status(tabId, page, text, error = false) {
+  await chrome.storage.session.set({['status:' + tabId]: {page, text, error, pending: pending.has(tabId)}});
   try {
     await chrome.action.setBadgeText({tabId, text: error ? '!' : pending.has(tabId) ? '…' : ''});
     await chrome.action.setBadgeBackgroundColor({tabId, color: error ? '#b04434' : '#007c83'});
@@ -29,12 +29,15 @@ async function status(tabId, text, error = false) {
 export async function launch(tabId, overrides = {}, link = null) {
   if (pending.has(tabId)) return {ok: false, message: 'A handoff is already in progress for this tab.'};
   pending.add(tabId);
+  let page = null;
   try {
     const preferences = {...await settings(), ...overrides};
     const options = normalize(preferences);
     const tab = await chrome.tabs.get(tabId);
+    page = tab.url;
     let url = link || tab.url;
     if (!/^https?:\/\//i.test(url || '')) throw Error('Open an HTTP or HTTPS video page first. Browser settings and local files cannot be sent.');
+    await status(tabId, page, 'Opening mpv. The browser keeps playing until mpv is ready.');
     const captured = await inspect(tabId);
     const matches = captured && sameVideo(captured.page, url);
     const position = options.resume ? (matches ? captured.position : null) : 0;
@@ -45,7 +48,6 @@ export async function launch(tabId, overrides = {}, link = null) {
       parsed.pathname = '/watch';
       url = parsed.href;
     }
-    await status(tabId, 'Opening mpv. The browser keeps playing until mpv is ready.');
     const response = await chrome.runtime.sendNativeMessage(host, {
       version: 1, action: 'play', url, position, quality: options.quality, fullscreen: options.fullscreen,
     });
@@ -61,12 +63,12 @@ export async function launch(tabId, overrides = {}, link = null) {
       } catch { message += ' The browser could not be paused; pause it manually if needed.'; }
     }
     pending.delete(tabId);
-    await status(tabId, message);
+    await status(tabId, page, message);
     return {ok: true, message};
   } catch (error) {
     pending.delete(tabId);
     const message = publicError(error);
-    await status(tabId, message, true);
+    await status(tabId, page, message, true);
     return {ok: false, message};
   }
 }

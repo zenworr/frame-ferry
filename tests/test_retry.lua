@@ -93,7 +93,7 @@ for _, limit in ipairs({10, 60, 300}) do
     for _, route in ipairs({"primary", "authenticated", "token", "fallback"}) do
         configured.load(url)
         assert(configured.route() == route)
-        assert(configured.properties["file-local-options/network-timeout"] == 4 * limit / 30)
+        assert(configured.properties["file-local-options/network-timeout"] == nil, "startup policy changed the playback timeout")
         configured.timeout()
     end
     configured.load(url)

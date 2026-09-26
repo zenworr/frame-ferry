@@ -47,7 +47,9 @@ Selected quality → additional access methods → earlier usable stream
                                              → error screen
 ```
 
-Recovery has a 30-second default limit; see [Frame Ferry configuration](../README.md#frame-ferry-configuration) to change it. Account access and token support require setup below; unavailable routes are skipped or fail quickly. Provider restrictions can still prevent playback. `Alt+q` goes directly to the fast fallback.
+Recovery has a 30-second default limit; see [Frame Ferry configuration](../README.md#frame-ferry-configuration) to change it. Account access and token support require setup below; unavailable routes are skipped or fail quickly. Provider restrictions can still prevent playback.
+
+During recorded YouTube playback, 10 seconds of continuous buffering starts recovery automatically. Pausing, seeking, or resumed playback cancels the timer. Recovery keeps your position and tries the remaining access methods before lowering quality. If the fallback also stalls, recovery stops at the error screen rather than repeating indefinitely. No shortcut is required; `Alt+q` remains an optional way to go directly to the fast fallback.
 
 ## Account access and updates
 
@@ -75,7 +77,7 @@ The provider runs on demand, with no persistent server. It is installed under `~
 
 - **Native host missing:** install for the correct browser/data root, reload the extension, and use **Check native host** in the popup.
 - **Missing player tools:** set absolute executable paths in [Frame Ferry configuration](../README.md#frame-ferry-configuration), or put the tools on the browser's `PATH` or in `~/.local/bin`.
-- **Playback fails:** check current yt-dlp support and account requirements. Browser playback does not prove extraction will work.
+- **Playback fails:** the error message identifies the player log. Check current yt-dlp support and account requirements. Browser playback does not prove extraction will work.
 - **Shortcut does nothing:** configure it on the browser's extension-shortcuts page.
 
 Run `python3 scripts/doctor --browser helium`, with your browser selected, to check installed files and versions. It does not test provider access or GPU output. Review logs for signed URLs and sensitive data before sharing them.
