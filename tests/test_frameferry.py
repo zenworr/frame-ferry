@@ -1,8 +1,6 @@
 import io
 import json
-import os
 import shutil
-import signal
 import socket
 import struct
 import subprocess
@@ -46,8 +44,9 @@ class NativeTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('mpv'), 'mpv is required')
     def test_real_native_handoff_starts_at_position_and_confirms_playback(self):
-        player = Player()
+        player = Player(url=None)
         self.addCleanup(player.close)
+        self.assertIsNone(player.process)
         config = player.root / 'native-config'
         config.mkdir()
         (config / 'mpv.conf').write_text('vo=null\nao=null\npause=yes\nkeep-open=yes\n')
@@ -55,6 +54,8 @@ class NativeTests(unittest.TestCase):
         original = native.wait_for_playback
 
         def probe(process, path, deadline):
+            self.addCleanup(process.wait, timeout=5)
+            self.addCleanup(process.terminate)
             original(process, path, deadline)
             with socket.socket(socket.AF_UNIX) as ipc:
                 ipc.connect(str(path))
@@ -72,12 +73,8 @@ class NativeTests(unittest.TestCase):
             patch.object(native, 'wait_for_playback', side_effect=probe),
         ):
             reply = native.handle(request(url=f'http://127.0.0.1:{player.server.server_port}/audio.wav', quality=0))
-        try:
-            self.assertTrue(reply['ok'])
-            self.assertAlmostEqual(observed[0], 30, delta=0.2)
-        finally:
-            os.kill(reply['pid'], signal.SIGTERM)
-            os.waitpid(reply['pid'], 0)
+        self.assertTrue(reply['ok'])
+        self.assertAlmostEqual(observed[0], 30, delta=0.2)
 
     @unittest.skipUnless(shutil.which('mpv'), 'mpv is required')
     def test_native_reports_the_safe_player_failure_reason(self):
