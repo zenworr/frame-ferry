@@ -77,6 +77,37 @@ class MpvTests(unittest.TestCase):
         self.assertEqual(p.get('playlist-count'), 1)
         self.assertFalse(p.get('pause'))
 
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg is required for the split-stream fixture')
+    def test_video_failure_recovers_while_audio_keeps_playing(self):
+        p = self.player({'primary': {'split': True, 'media': 'broken-video.mp4'},
+                         'authenticated': {'split': True, 'media': 'video.mp4'}},
+                        media_seconds=120, video_seconds=120, options=('--speed=4',))
+        p.wait_loaded('primary')
+        p.wait(lambda: (p.get('audio-pts') or 0) >
+               (p.get('demuxer-cache-state').get('cache-end') or 120) + 1, timeout=8)
+        self.assertFalse(p.get('paused-for-cache'), 'fixture did not reproduce the video-only failure')
+        self.assertFalse(p.get('eof-reached'))
+        audio = p.get('audio-pts')
+        reader = p.get('demuxer-cache-state')['reader-pts']
+        p.wait(lambda: p.get('audio-pts') > audio + 2)
+        self.assertAlmostEqual(p.get('demuxer-cache-state')['reader-pts'], reader, delta=.1)
+        last_position = [p.get('time-pos')]
+        def recovered():
+            if p.get('user-data/youtube-quality/route') != 'primary':
+                return True
+            position = p.get('time-pos')
+            if position is not None:
+                last_position[0] = position
+            return False
+        p.wait(recovered, timeout=13)
+        p.wait_loaded('authenticated')
+        self.assertAlmostEqual(float(p.get('file-local-options/start')), last_position[0], delta=1)
+        self.assertEqual(p.get('playlist-count'), 1)
+        self.assertEqual((p.root / 'calls').read_text().splitlines(), ['primary', 'authenticated'])
+        reader = p.get('demuxer-cache-state')['reader-pts']
+        p.wait(lambda: p.get('demuxer-cache-state')['reader-pts'] > reader + 1)
+        self.assertIn('Video stream stopped while audio continued', p.log.read_text())
+
     def test_error_screen_and_manual_retry(self):
         p = self.player({'*': 'fail'})
         p.wait(lambda: p.get('media-title') == 'YouTube playback failed' and p.get('video-params'))

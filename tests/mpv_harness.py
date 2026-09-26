@@ -20,7 +20,7 @@ URL = 'https://youtu.be/offline'
 
 
 class Player:
-    def __init__(self, routes=None, duplicates=False, options=(), provider=True, url=URL, media_seconds=60):
+    def __init__(self, routes=None, duplicates=False, options=(), provider=True, url=URL, media_seconds=60, video_seconds=0):
         self.temp = tempfile.TemporaryDirectory(prefix='mpv-test-')
         self.root = Path(self.temp.name)
         self.process = self.socket = self.reader = self.server = self.thread = None
@@ -32,7 +32,15 @@ class Player:
                 audio.setsampwidth(2)
                 audio.setframerate(8000)
                 audio.writeframes(b'\0' * (media_seconds * 8000 * 2))
-            media = data.getvalue()
+            audio_media = data.getvalue()
+            video_media = b''
+            if video_seconds:
+                video = self.root / 'video.mp4'
+                subprocess.run([shutil.which('ffmpeg'), '-v', 'error', '-f', 'lavfi', '-i',
+                                'testsrc2=size=160x90:rate=10', '-t', str(video_seconds),
+                                '-c:v', 'mpeg4', '-q:v', '3', '-movflags', '+faststart', str(video)],
+                               check=True, capture_output=True, timeout=20)
+                video_media = video.read_bytes()
             self.requests = requests = []
 
             class Handler(BaseHTTPRequestHandler):
@@ -63,20 +71,32 @@ class Player:
                                 self.wfile.write(b'0123456789')
                                 self.wfile.flush()
                                 time.sleep(.1)
+                        media = video_media if self.path.endswith('video.mp4') else audio_media
                         requested = self.headers.get('Range', 'bytes=0-')
                         requests.append((requested, self.client_address[1]))
                         first, last = requested.split('=')[1].split('-')
                         start = int(first)
                         end = min(int(last), len(media) - 1) if last else len(media) - 1
+                        broken = self.path == '/broken-video.mp4'
+                        cutoff = len(media) // 16
+                        if broken and start >= cutoff:
+                            self.send_response(403)
+                            self.send_header('Content-Length', '0')
+                            self.end_headers()
+                            return
                         self.send_response(206)
-                        self.send_header('Content-Type', 'audio/wav')
+                        self.send_header('Content-Type', 'video/mp4' if self.path.endswith('video.mp4') else 'audio/wav')
                         self.send_header('Content-Length', str(end - start + 1))
                         self.send_header('Accept-Ranges', 'bytes')
                         self.send_header('Content-Range', f'bytes {start}-{end}/{len(media)}')
                         self.end_headers()
                         if self.path == '/buffer' and 1024 * 1024 <= start < len(media) - 65536:
                             buffer_release.wait()
-                        self.wfile.write(media[start:end+1])
+                        if broken:
+                            self.wfile.write(media[start:min(end + 1, cutoff)])
+                            self.close_connection = True
+                        else:
+                            self.wfile.write(media[start:end+1])
                     except (BrokenPipeError, ConnectionResetError):
                         pass
 
@@ -111,7 +131,12 @@ if 't' in query: info['start_time'] = float(query['t'][0])
 if isinstance(action, dict):
     info.update(action)
     action = info.pop('media', 'audio.wav')
-info['url'] = 'http://127.0.0.1:{self.server.server_port}/' + (action if action in ('stall', 'denied', 'header', 'buffer') else 'audio.wav')
+base = 'http://127.0.0.1:{self.server.server_port}/'
+info['url'] = base + (action if action in ('stall', 'denied', 'header', 'buffer', 'video.mp4', 'broken-video.mp4') else 'audio.wav')
+if info.pop('split', False):
+    info['requested_formats'] = [
+        {{'url': info['url'], 'protocol': 'http', 'ext': 'mp4', 'vcodec': 'mpeg4', 'acodec': 'none'}},
+        {{'url': base + 'audio.wav', 'protocol': 'http', 'ext': 'wav', 'vcodec': 'none', 'acodec': 'pcm_s16le'}}]
 print(json.dumps(info))
 ''')
             self.extractor.chmod(0o755)

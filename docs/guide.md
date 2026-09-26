@@ -49,7 +49,7 @@ Selected quality → additional access methods → earlier usable stream
 
 Recovery has a 30-second default limit; see [Frame Ferry configuration](../README.md#frame-ferry-configuration) to change it. Account access and token support require setup below; unavailable routes are skipped or fail quickly. Provider restrictions can still prevent playback.
 
-During recorded YouTube playback, 10 seconds of continuous buffering starts recovery automatically. Pausing, seeking, or resumed playback cancels the timer. Recovery keeps your position and tries the remaining access methods before lowering quality. If the fallback also stalls, recovery stops at the error screen rather than repeating indefinitely. No shortcut is required; `Alt+q` remains an optional way to go directly to the fast fallback.
+During recorded YouTube playback, recovery starts automatically after 10 seconds of continuous buffering, or when the video stream stops advancing for 10 seconds while audio continues. Pausing, seeking, or resumed playback cancels the timer. Recovery keeps your position and tries the remaining access methods before lowering quality. If the fallback also stalls, recovery stops at the error screen rather than repeating indefinitely. No shortcut is required; `Alt+q` remains an optional way to go directly to the fast fallback.
 
 ## Account access and updates
 
@@ -80,7 +80,7 @@ The provider runs on demand, with no persistent server. It is installed under `~
 - **Playback fails:** the error message identifies the player log. Check current yt-dlp support and account requirements. Browser playback does not prove extraction will work.
 - **Shortcut does nothing:** configure it on the browser's extension-shortcuts page.
 
-Run `python3 scripts/doctor --browser helium`, with your browser selected, to check installed files and versions. It does not test provider access or GPU output. Review logs for signed URLs and sensitive data before sharing them.
+Run `python3 scripts/doctor --browser helium`, with your browser selected, to check installed files and versions. It checks that managed recovery scripts match this checkout and that required UI and SponsorBlock files are present and nonempty. It does not test provider access or GPU output. Review logs for signed URLs and sensitive data before sharing them.
 
 ## Remove or restore
 

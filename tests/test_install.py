@@ -5,8 +5,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from helpers import ROOT
+from frameferry_install import atomic_write
 
 
 class InstallTests(unittest.TestCase):
@@ -48,10 +50,11 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
     def prepare(self):
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        for name in ('uosc/main.lua', 'thumbfast.lua'):
+        for name in ('uosc/main.lua', 'uosc/lib/utils.lua', 'thumbfast.lua', 'sponsorblock.lua',
+                     'sponsorblock_shared/main.lua', 'sponsorblock_shared/sponsorblock.py'):
             target = self.player / 'scripts' / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.touch()
+            target.write_text('component fixture\n')
 
     def test_component_installers_require_cmp_before_writing_files(self):
         for name in ('install-mpv-ui.sh', 'install-mpv-sponsorblock.sh'):
@@ -78,6 +81,51 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         self.assertIn(str(self.data), (self.player / 'script-opts/ytdl_hook.conf').read_text())
         self.assertEqual((self.data / 'frameferry/LICENSE').read_bytes(), (ROOT / 'LICENSE').read_bytes())
         self.assertTrue((self.data / 'frameferry/LICENSES/MPL-2.0.txt').is_file())
+
+    def test_repeat_install_does_not_rewrite_unchanged_files_or_ledger(self):
+        self.assertEqual(self.install().returncode, 0)
+        ledger = self.state / 'frameferry/installation.json'
+        files = [Path(name) for name in json.loads(ledger.read_text())] + [ledger]
+        before = {path: (path.stat().st_ino, path.stat().st_mtime_ns) for path in files}
+        self.assertEqual(self.install().returncode, 0)
+        self.assertEqual(before, {path: (path.stat().st_ino, path.stat().st_mtime_ns) for path in files})
+
+    def test_atomic_write_failure_keeps_the_original_and_removes_temporary_file(self):
+        target = self.home / 'ledger.json'
+        target.write_text('original')
+        with patch.object(Path, 'replace', side_effect=OSError('replacement failed')):
+            with self.assertRaises(OSError):
+                atomic_write(target, b'new contents', 0o600)
+        self.assertEqual(target.read_text(), 'original')
+        self.assertEqual(list(self.home.glob('ledger.json.*')), [])
+        atomic_write(target, b'new contents', 0o600)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+    def test_doctor_rejects_empty_components_and_changed_recovery_scripts(self):
+        self.prepare()
+        for name in ('scripts/youtube.lua', 'scripts/sponsorblock_chapter_skip.lua',
+                     'scripts/uosc/main.lua', 'scripts/uosc/lib/utils.lua', 'scripts/thumbfast.lua',
+                     'scripts/sponsorblock_shared/sponsorblock.py'):
+            with self.subTest(file=name):
+                target = self.player / name
+                content = target.read_bytes()
+                target.write_bytes(b'')
+                self.assertEqual(self.doctor().returncode, 1)
+                target.write_bytes(content)
+        target = self.player / 'scripts/youtube.lua'
+        target.write_text('-- old version\n')
+        self.assertEqual(self.doctor().returncode, 1)
+
+    def test_component_installers_reject_relative_paths_before_writing(self):
+        for key in ('MPV_CONFIG_DIR', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'):
+            for script in ('install-mpv-ui.sh', 'install-mpv-sponsorblock.sh', 'install-mpv-token-provider.sh'):
+                with self.subTest(variable=key, script=script):
+                    result = subprocess.run(['bash', str(ROOT / 'scripts' / script)],
+                                            env={**self.env, key: 'relative'}, capture_output=True, timeout=5)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b'must be an absolute path', result.stderr)
+        self.assertFalse(self.player.exists())
+        self.assertFalse(self.data.exists())
 
     def test_updates_keep_user_settings_and_uninstall_keeps_changed_files(self):
         self.prepare()
@@ -209,4 +257,9 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         (target / 'server/build/generate_once.js').touch()
         self.executable('git', '#!/bin/sh\n[ "$3" = rev-parse ] || exit 1\necho 37169ee2656e08c5c2e5dc9df4c598c0cb4c88a8\n')
         self.executable('npm', '#!/bin/sh\nexit 1\n')
-        self.assertEqual(self.install('install-mpv-token-provider.sh').returncode, 0)
+        result = subprocess.run(['bash', '-c',
+            'command() { if [[ "$1" == -v && "$2" == deno ]]; then return 1; '
+            'else builtin command "$@"; fi; }; source "$1"',
+            'test', str(ROOT / 'scripts/install-mpv-token-provider.sh')],
+            env=self.env, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)

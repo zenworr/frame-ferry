@@ -29,7 +29,7 @@ async function status(tabId, page, text, error = false) {
 export async function launch(tabId, overrides = {}, link = null) {
   if (pending.has(tabId)) return {ok: false, message: 'A handoff is already in progress for this tab.'};
   pending.add(tabId);
-  let page = null;
+  let page = null, result;
   try {
     const preferences = {...await settings(), ...overrides};
     const options = normalize(preferences);
@@ -62,15 +62,14 @@ export async function launch(tabId, overrides = {}, link = null) {
         } else message += ' The browser tab changed, so it was left playing.';
       } catch { message += ' The browser could not be paused; pause it manually if needed.'; }
     }
-    pending.delete(tabId);
-    await status(tabId, page, message);
-    return {ok: true, message};
+    result = {ok: true, message};
   } catch (error) {
+    result = {ok: false, message: publicError(error)};
+  } finally {
     pending.delete(tabId);
-    const message = publicError(error);
-    await status(tabId, page, message, true);
-    return {ok: false, message};
   }
+  await status(tabId, page, result.message, !result.ok);
+  return result;
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) return false;

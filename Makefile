@@ -6,6 +6,7 @@ PYTHON ?= python3
 check: syntax test
 
 syntax:
+	$(PYTHON) -m py_compile scripts/*.py scripts/frameferry-native scripts/setup-frameferry scripts/doctor scripts/yt-dlp-mpv scripts/yt-dlp-update-background
 	@if command -v node >/dev/null; then for file in extension/*.js tests/*.mjs; do node --check "$$file" || exit; done; fi
 	@for file in scripts/*.sh scripts/lib/*.sh; do bash -n "$$file" || exit; done
 	@for file in config/mpv/scripts/*.lua tests/*.lua; do luac -p "$$file" || exit; done

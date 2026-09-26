@@ -2,18 +2,18 @@
 // These functions run in the page's isolated world and use no extension globals.
 export function captureVideo() {
   if (document.querySelector('.ad-showing, .ad-interrupting')) return null;
-  const videos = [...document.querySelectorAll('video')].filter(video => {
-    const box = video.getBoundingClientRect();
-    return box.width > 0 && box.height > 0 && video.readyState > 0 && !video.ended;
-  });
-  videos.sort((a, b) => {
-    const score = video => {
-      const rect = video.getBoundingClientRect();
-      return rect.width * rect.height * (video.paused ? 1 : 2);
-    };
-    return score(b) - score(a);
-  });
-  const video = videos.find(item => item.matches('video.html5-main-video')) || videos[0];
+  let video, bestScore = -1, hasMain = false;
+  for (const candidate of document.querySelectorAll('video')) {
+    const box = candidate.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0 || candidate.readyState <= 0 || candidate.ended) continue;
+    const main = candidate.matches('video.html5-main-video');
+    const score = box.width * box.height * (candidate.paused ? 1 : 2);
+    if ((main && !hasMain) || (main === hasMain && score > bestScore)) {
+      video = candidate;
+      bestScore = score;
+      hasMain = main;
+    }
+  }
   if (!video || !Number.isFinite(video.duration) || video.duration <= 0 || !Number.isFinite(video.currentTime)) return null;
   return {position: Math.floor(video.currentTime), page: location.href};
 }

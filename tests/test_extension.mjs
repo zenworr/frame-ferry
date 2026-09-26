@@ -76,6 +76,17 @@ const video = (area, time, extra = {}) => ({readyState: 4, ended: false, paused:
 globalThis.location = {href: 'https://example.org/video'};
 globalThis.document = {querySelector: () => null, querySelectorAll: () => [video(0, 9), video(100, 20), video(1000, 40)]};
 assert.equal(captureVideo().position, 40);
+let layoutReads = 0;
+const candidates = Array.from({length: 100}, (_, i) => video(i + 1, i, {
+ getBoundingClientRect() { layoutReads++; return {width: i + 1, height: 1}; },
+}));
+document.querySelectorAll = () => candidates;
+assert.equal(captureVideo().position, 99);
+assert.equal(layoutReads, 100, 'capture repeatedly read the same video layout');
+candidates[3].matches = () => true;
+assert.equal(captureVideo().position, 3, 'the main YouTube video lost priority');
+candidates[3].ended = true;
+assert.equal(captureVideo().position, 99);
 document.querySelector = () => ({}); assert.equal(captureVideo(), null);
 document.querySelector = () => null; document.querySelectorAll = () => [video(1000, 40, {duration: Infinity})];
 assert.equal(captureVideo(), null);

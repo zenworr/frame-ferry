@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 source "$repo_dir/scripts/lib/install.sh"
-require_commands git deno
+require_commands git
 
 # Keep the provider out of standalone yt-dlp's plugin directories.
 commit=37169ee2656e08c5c2e5dc9df4c598c0cb4c88a8

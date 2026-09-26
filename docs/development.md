@@ -16,14 +16,14 @@ YouTube recovery state is separate for each player. Retained extraction metadata
 
 ## Tests
 
-Install Make, Python 3.10+, Lua/luac 5.4, Node.js 22+, mpv 0.41+, Bash, curl, patch, and diffutils.
+Install Make, Python 3.10+, Lua/luac 5.4, Node.js 22+, mpv 0.41+, FFmpeg, Bash, curl, patch, and diffutils.
 
 ```sh
 make check
 make test-slow
 ```
 
-The suite covers the native protocol, extension behavior, installation and removal, extraction cleanup, recovery, and player controls. The slow suite includes the full 30-second recovery deadline. GitHub Actions runs both commands.
+The suite covers the native protocol, extension behavior, installation and removal, extraction cleanup, recovery, and player controls. A split-stream fixture cuts the video connection while audio continues. It checks automatic recovery, saved position, and normal playback without false recovery. The slow suite includes the full 30-second recovery deadline. GitHub Actions runs both commands.
 
 Tests use local media and simulated providers. They do not contact YouTube or measure GPU output. mpv and JavaScript tests are skipped if their tools are absent; install both for a complete run.
 

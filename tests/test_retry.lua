@@ -194,6 +194,7 @@ end
 
 for _, other in ipairs({"https://example.org/video", "https://youtube.com.evil.test/video", "/tmp/video.mp4"}) do
     local p = player(); p.load(other); p.finish("error")
-    assert(#p.commands == 0 and #p.timers == 0, "policy applied to unrelated media")
+    assert(#p.commands == 0, "policy applied to unrelated media")
+    for _, timer in ipairs(p.timers) do assert(timer.killed, "unrelated media started a recovery timer") end
 end
 print("YouTube routes, UI state, cancellation, deadlines, cookies, and position: passed")
