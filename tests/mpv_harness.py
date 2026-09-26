@@ -129,6 +129,8 @@ class Player:
                 target=self.server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True
             )
             self.thread.start()
+            if url is None:
+                return
             self.routes = self.root / 'routes.json'
             self.routes.write_text(json.dumps(routes or {}))
             self.extractor = self.root / 'yt-dlp'
