@@ -1,21 +1,27 @@
+import json
 import subprocess
 import sys
 import time
+from pathlib import Path
 from unittest.mock import patch
 
-from helpers import ExtractorFixture, ROOT, load_script, wait_for
+from .helpers import ROOT, ExtractorFixture, load_script, wait_for
 
 wrapper = load_script('yt-dlp-mpv')
 
 
 class UpdaterTests(ExtractorFixture):
     def update_command(self):
-        return [sys.executable, str(ROOT / 'scripts/yt-dlp-update-background'), str(self.fake),
-                str(self.state / 'yt-dlp-update.lock'), str(self.state / 'yt-dlp-update.log')]
+        return [
+            sys.executable,
+            str(ROOT / 'scripts/yt-dlp-update-background'),
+            str(self.fake),
+            str(self.state / 'yt-dlp-update.lock'),
+            str(self.state / 'yt-dlp-update.log'),
+        ]
 
     def test_cooldown_does_not_spawn_an_updater(self):
-        with patch.object(wrapper, 'STATE_DIR', self.state), \
-                patch.object(wrapper.subprocess, 'Popen') as popen:
+        with patch.object(wrapper, 'STATE_DIR', self.state), patch.object(wrapper.subprocess, 'Popen') as popen:
             wrapper.start_background_update(str(self.fake))
             popen.assert_not_called()
 
@@ -46,6 +52,16 @@ class UpdaterTests(ExtractorFixture):
             subprocess.run(self.update_command(), env=self.env, check=True, timeout=5)
         self.assertEqual(len(self.calls()), 1)
         self.assertGreater(float((self.state / 'yt-dlp-update.lock').read_text()), time.time())
+
+    def test_configured_update_interval_is_used(self):
+        config = Path(self.env['XDG_CONFIG_HOME']) / 'frameferry/config.json'
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps({'update_interval_hours': 1}))
+        (self.state / 'yt-dlp-update.lock').write_text('')
+        started = time.time()
+        subprocess.run(self.update_command(), env=self.env, check=True, timeout=5)
+        deadline = float((self.state / 'yt-dlp-update.lock').read_text())
+        self.assertAlmostEqual(deadline - started, 3600, delta=5)
 
     def test_expired_cooldown_allows_a_new_check(self):
         (self.state / 'yt-dlp-update.lock').write_text(str(time.time() - 1))

@@ -5,30 +5,38 @@ import time
 import unittest
 from unittest.mock import patch
 
-from helpers import ExtractorFixture, ROOT, load_script, running, wait_for
+from .helpers import ROOT, ExtractorFixture, load_script, running, wait_for
 
 wrapper = load_script('yt-dlp-mpv')
 
 
 class FormatTests(unittest.TestCase):
     def test_youtube_hosts(self):
-        for url in ['https://youtube.com/watch?v=x', 'https://m.youtube.com/x',
-                    'https://youtu.be/x', 'https://www.youtube-nocookie.com/embed/x']:
+        for url in [
+            'https://youtube.com/watch?v=x',
+            'https://m.youtube.com/x',
+            'https://youtu.be/x',
+            'https://www.youtube-nocookie.com/embed/x',
+        ]:
             self.assertTrue(wrapper.is_youtube_url(url), url)
-        for url in ['https://youtube.com.evil.test/x', 'ftp://youtube.com/x',
-                    'https://notyoutube.com/x', 'https://[broken']:
+        for url in [
+            'https://youtube.com.evil.test/x',
+            'ftp://youtube.com/x',
+            'https://notyoutube.com/x',
+            'https://[broken',
+        ]:
             self.assertFalse(wrapper.is_youtube_url(url), url)
 
     def test_fallback_preserves_ceiling_and_separator(self):
         fmt = 'bestvideo[height<=?720]+bestaudio/best[height<=?720]'
-        for args in [['-f', fmt], ['--format', fmt], ['--format='+fmt], ['-f'+fmt]]:
+        for args in [['-f', fmt], ['--format', fmt], ['--format=' + fmt], ['-f' + fmt]]:
             with self.subTest(args=args):
-                original = args + ['--', 'https://youtube.com/watch?v=x']
+                original = [*args, '--', 'https://youtube.com/watch?v=x']
                 result = wrapper.with_quality_fallback(original)
                 self.assertIn('best[height<=?720]', ' '.join(result))
                 self.assertNotIn('2160', ' '.join(result))
                 self.assertLess(result.index('--extractor-args'), result.index('--'))
-                self.assertEqual(original, args + ['--', 'https://youtube.com/watch?v=x'])
+                self.assertEqual(original, [*args, '--', 'https://youtube.com/watch?v=x'])
 
     def test_fallback_without_format_and_audio_only(self):
         result = wrapper.with_quality_fallback(['-J', '--', 'https://youtu.be/x'])
@@ -46,8 +54,9 @@ class FormatTests(unittest.TestCase):
 
     def test_fast_token_fallback_respects_selected_ceiling(self):
         for ceiling in (720, 2160):
-            result = wrapper.with_quality_fallback(['-f', f'bestvideo[height<=?{ceiling}]+bestaudio'],
-                                                   cookies=True, token=True)
+            result = wrapper.with_quality_fallback(
+                ['-f', f'bestvideo[height<=?{ceiling}]+bestaudio'], cookies=True, token=True
+            )
             self.assertIn(f'bestvideo[height<=?{min(ceiling, 1080)}]+bestaudio', ' '.join(result))
             self.assertIn('youtube:player_client=mweb;use_ad_playback_context=true', result)
             self.assertNotIn('m3u8_native', ' '.join(result))
@@ -59,11 +68,16 @@ class FormatTests(unittest.TestCase):
         self.assertFalse(wrapper.below_selected_quality({'width': 1920, 'height': 960}, ['-f', 'best']))
 
     def test_media_availability_uses_selected_formats_and_budget(self):
-        info = {'requested_formats': [{'available_at': 105}, {'available_at': 104}],
-                'formats': [{'available_at': 10000}]}
-        with patch.object(wrapper.time, 'time', return_value=100), \
-                patch.object(wrapper.time, 'monotonic', return_value=10), \
-                patch.object(wrapper.time, 'sleep') as sleep, patch.object(wrapper.sys, 'stderr'):
+        info = {
+            'requested_formats': [{'available_at': 105}, {'available_at': 104}],
+            'formats': [{'available_at': 10000}],
+        }
+        with (
+            patch.object(wrapper.time, 'time', return_value=100),
+            patch.object(wrapper.time, 'monotonic', return_value=10),
+            patch.object(wrapper.time, 'sleep') as sleep,
+            patch.object(wrapper.sys, 'stderr'),
+        ):
             self.assertTrue(wrapper.wait_until_available(info, 16))
             sleep.assert_called_once_with(5)
             sleep.reset_mock()
@@ -85,8 +99,9 @@ class FormatTests(unittest.TestCase):
 
     def test_extraction_deadline(self):
         started = time.monotonic()
-        status, stdout, stderr = wrapper.run_captured([
-            sys.executable, '-c', 'import time; time.sleep(30)'], timeout=0.1)
+        status, stdout, stderr = wrapper.run_captured(
+            [sys.executable, '-c', 'import time; time.sleep(30)'], timeout=0.1
+        )
         self.assertEqual(status, 1)
         self.assertEqual(stdout, b'')
         self.assertIn(b'timed out', stderr)
@@ -95,8 +110,7 @@ class FormatTests(unittest.TestCase):
 
 class ProcessTests(ExtractorFixture):
     def test_primary_is_anonymous(self):
-        result = self.run_wrapper('-J', '-f', 'bestvideo[height<=?2160]+bestaudio',
-                                  '--', 'https://youtu.be/test')
+        result = self.run_wrapper('-J', '-f', 'bestvideo[height<=?2160]+bestaudio', '--', 'https://youtu.be/test')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.calls()), 1)
         self.assertNotIn('--cookies-from-browser', self.calls()[0])
@@ -109,9 +123,16 @@ class ProcessTests(ExtractorFixture):
         self.assertEqual(len(self.calls()), 1)
 
     def test_explicit_fallback_and_cookie_opt_in(self):
-        result = self.run_wrapper('-J', '--cookies-from-browser', 'chromium:test',
-                                  '--frameferry-route=fallback', '-f', 'best[height<=?720]',
-                                  '--', 'https://youtu.be/test')
+        result = self.run_wrapper(
+            '-J',
+            '--cookies-from-browser',
+            'chromium:test',
+            '--frameferry-route=fallback',
+            '-f',
+            'best[height<=?720]',
+            '--',
+            'https://youtu.be/test',
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         call = self.calls()[0]
         self.assertFalse(any(c.startswith('--frameferry') for c in call))
@@ -122,9 +143,18 @@ class ProcessTests(ExtractorFixture):
     def test_full_quality_token_route(self):
         provider = self.install_provider()
         fmt = 'bestvideo[height<=?2160]+bestaudio/best[height<=?2160]'
-        result = self.run_wrapper('-J', '--frameferry-route=token', '--frameferry-timeout', '8',
-                                  '--cookies-from-browser', 'chromium:test', '-f', fmt,
-                                  '--', 'https://youtu.be/test')
+        result = self.run_wrapper(
+            '-J',
+            '--frameferry-route=token',
+            '--frameferry-timeout',
+            '8',
+            '--cookies-from-browser',
+            'chromium:test',
+            '-f',
+            fmt,
+            '--',
+            'https://youtu.be/test',
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         call = self.calls()[0]
         self.assertIn(fmt, call)
@@ -136,9 +166,16 @@ class ProcessTests(ExtractorFixture):
 
     def test_fast_cookie_fallback_uses_installed_provider(self):
         provider = self.install_provider()
-        result = self.run_wrapper('-J', '--cookies-from-browser', 'chromium:test',
-                                  '--frameferry-route=fallback', '-f', 'best[height<=?2160]',
-                                  '--', 'https://youtu.be/test')
+        result = self.run_wrapper(
+            '-J',
+            '--cookies-from-browser',
+            'chromium:test',
+            '--frameferry-route=fallback',
+            '-f',
+            'best[height<=?2160]',
+            '--',
+            'https://youtu.be/test',
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         call = self.calls()[0]
         self.assertIn('youtube:player_client=mweb;use_ad_playback_context=true', call)
@@ -153,20 +190,40 @@ class ProcessTests(ExtractorFixture):
 
     def test_authenticated_route_keeps_full_quality(self):
         fmt = 'bestvideo[height<=?2160]+bestaudio'
-        result = self.run_wrapper('-J', '--frameferry-route', 'authenticated',
-                                  '--cookies-from-browser', 'chromium:test', '-f', fmt,
-                                  '--', 'https://youtu.be/test')
+        result = self.run_wrapper(
+            '-J',
+            '--frameferry-route',
+            'authenticated',
+            '--cookies-from-browser',
+            'chromium:test',
+            '-f',
+            fmt,
+            '--',
+            'https://youtu.be/test',
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(fmt, self.calls()[0])
         self.assertNotIn('youtube:player_client=web_safari', self.calls()[0])
 
     def test_limited_authenticated_json_can_be_reused_without_extraction(self):
-        self.env['FAKE_INFO'] = json.dumps({'width': 1920, 'height': 1080,
-            'http_headers': {'Referer': 'https://example.test/retained'},
-            'formats': [{'available_at': time.time() + 3600}]})
-        result = self.run_wrapper('-J', '--frameferry-route=authenticated',
-                                  '--cookies-from-browser', 'chromium:test',
-                                  '-f', 'bestvideo[height<=?2160]+bestaudio', '--', 'https://youtu.be/test')
+        self.env['FAKE_INFO'] = json.dumps(
+            {
+                'width': 1920,
+                'height': 1080,
+                'http_headers': {'Referer': 'https://example.test/retained'},
+                'formats': [{'available_at': time.time() + 3600}],
+            }
+        )
+        result = self.run_wrapper(
+            '-J',
+            '--frameferry-route=authenticated',
+            '--cookies-from-browser',
+            'chromium:test',
+            '-f',
+            'bestvideo[height<=?2160]+bestaudio',
+            '--',
+            'https://youtu.be/test',
+        )
         self.assertEqual(result.returncode, 1)
         self.assertIn(b'limited authenticated formats', result.stderr)
         self.assertEqual(json.loads(result.stdout)['height'], 1080)
@@ -177,16 +234,29 @@ class ProcessTests(ExtractorFixture):
             candidate.unlink()
             metadata.write(result.stdout)
             metadata.flush()
-            replay = self.run_wrapper('-J', '--frameferry-route=retained',
-                                      '--frameferry-candidate', str(candidate), '--', 'https://youtu.be/test')
+            replay = self.run_wrapper(
+                '-J',
+                '--frameferry-route=retained',
+                '--frameferry-candidate',
+                str(candidate),
+                '--',
+                'https://youtu.be/test',
+            )
         self.assertEqual(replay.returncode, 0, replay.stderr)
         self.assertEqual(replay.stdout, result.stdout)
         self.assertEqual(len(self.calls()), 1)
 
     def test_retained_stream_checks_availability_and_invalid_files(self):
         candidate = self.home / 'candidate.json'
-        args = ('-J', '--frameferry-route=retained', '--frameferry-timeout=.1',
-                '--frameferry-candidate', str(candidate), '--', 'https://youtu.be/test')
+        args = (
+            '-J',
+            '--frameferry-route=retained',
+            '--frameferry-timeout=.1',
+            '--frameferry-candidate',
+            str(candidate),
+            '--',
+            'https://youtu.be/test',
+        )
         result = self.run_wrapper(*args)
         self.assertEqual(result.returncode, 1, result.stderr)
         for content in ('not JSON', '[]', json.dumps({'available_at': time.time() + 3600})):
@@ -203,9 +273,12 @@ class ProcessTests(ExtractorFixture):
 
     def test_mpv_sigkill_stops_extractor_and_descendants(self):
         self.env['FAKE_PID'] = '1'
-        process = subprocess.Popen([sys.executable, str(ROOT / 'scripts/yt-dlp-mpv'),
-                                    '-J', '--', 'https://youtu.be/test'],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env)
+        process = subprocess.Popen(
+            [sys.executable, str(ROOT / 'scripts/yt-dlp-mpv'), '-J', '--', 'https://youtu.be/test'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.env,
+        )
         try:
             wait_for(lambda: (self.home / 'pids').exists())
             pids = list(map(int, (self.home / 'pids').read_text().split()))

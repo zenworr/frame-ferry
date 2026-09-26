@@ -1,14 +1,14 @@
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import tempfile
 import time
 import unittest
+from pathlib import Path
 
-from helpers import ROOT
-from mpv_harness import Player, URL
+from .helpers import ROOT
+from .mpv_harness import URL, Player
 
 
 @unittest.skipUnless(shutil.which('mpv'), 'mpv is required for offline playback tests')
@@ -27,13 +27,23 @@ class MpvTests(unittest.TestCase):
         p.wait(lambda: len((p.root / 'calls').read_text().splitlines()) == 4)
         p.wait_loaded('authenticated')
         self.assertEqual(p.get('playlist-count'), 2)
-        self.assertEqual((p.root / 'calls').read_text().splitlines(),
-                         ['primary', 'authenticated', 'primary', 'authenticated'])
+        self.assertEqual(
+            (p.root / 'calls').read_text().splitlines(), ['primary', 'authenticated', 'primary', 'authenticated']
+        )
 
     def test_youtube_transport_and_cache_in_real_mpv(self):
-        p = self.player({'primary': {'protocol': 'http'}}, media_seconds=180,
-                        options=(f'--include={ROOT}/config/mpv/mpv.conf', '--vo=null', '--ao=null', '--pause=yes',
-                                 '--save-position-on-quit=no', '--no-resume-playback'))
+        p = self.player(
+            {'primary': {'protocol': 'http'}},
+            media_seconds=180,
+            options=(
+                f'--include={ROOT}/config/mpv/mpv.conf',
+                '--vo=null',
+                '--ao=null',
+                '--pause=yes',
+                '--save-position-on-quit=no',
+                '--no-resume-playback',
+            ),
+        )
         p.wait_loaded('primary')
         self.assertEqual(p.get('options/network-timeout'), 60)
         self.assertGreater(p.get('options/cache-secs'), 180)
@@ -52,11 +62,14 @@ class MpvTests(unittest.TestCase):
         other = f'http://127.0.0.1:{p.server.server_port}/audio.wav'
         p.command('loadfile', other)
         p.wait(lambda: p.get('user-data/test/ready') and p.get('path') == other)
-        self.assertNotIn('request_size', p.get('options/stream-lavf-o'), 'YouTube transport options leaked to another site')
+        self.assertNotIn(
+            'request_size', p.get('options/stream-lavf-o'), 'YouTube transport options leaked to another site'
+        )
 
     def test_sustained_buffering_recovers_automatically_at_the_same_position(self):
-        p = self.player({'primary': {'protocol': 'http', 'media': 'buffer'}},
-                        media_seconds=180, options=('--speed=20',))
+        p = self.player(
+            {'primary': {'protocol': 'http', 'media': 'buffer'}}, media_seconds=180, options=('--speed=20',)
+        )
         p.wait_loaded('primary')
         version = re.match(r'^n?(\d+)\.', p.get('ffmpeg-version'))
         if not version or int(version[1]) < 9:
@@ -71,27 +84,35 @@ class MpvTests(unittest.TestCase):
         p.wait_loaded('authenticated')
         self.assertGreater(elapsed, 9)
         self.assertLess(elapsed, 13)
-        self.assertAlmostEqual(float(p.get('file-local-options/start')), position, delta=.5)
-        self.assertGreaterEqual(p.get('time-pos'), position - .5)
+        self.assertAlmostEqual(float(p.get('file-local-options/start')), position, delta=0.5)
+        self.assertGreaterEqual(p.get('time-pos'), position - 0.5)
         self.assertEqual((p.root / 'calls').read_text().splitlines(), ['primary', 'authenticated'])
         self.assertEqual(p.get('playlist-count'), 1)
         self.assertFalse(p.get('pause'))
 
     @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg is required for the split-stream fixture')
     def test_video_failure_recovers_while_audio_keeps_playing(self):
-        p = self.player({'primary': {'split': True, 'media': 'broken-video.mp4'},
-                         'authenticated': {'split': True, 'media': 'video.mp4'}},
-                        media_seconds=120, video_seconds=120, options=('--speed=4',))
+        p = self.player(
+            {
+                'primary': {'split': True, 'media': 'broken-video.mp4'},
+                'authenticated': {'split': True, 'media': 'video.mp4'},
+            },
+            media_seconds=120,
+            video_seconds=120,
+            options=('--speed=4',),
+        )
         p.wait_loaded('primary')
-        p.wait(lambda: (p.get('audio-pts') or 0) >
-               (p.get('demuxer-cache-state').get('cache-end') or 120) + 1, timeout=8)
+        p.wait(
+            lambda: (p.get('audio-pts') or 0) > (p.get('demuxer-cache-state').get('cache-end') or 120) + 1, timeout=8
+        )
         self.assertFalse(p.get('paused-for-cache'), 'fixture did not reproduce the video-only failure')
         self.assertFalse(p.get('eof-reached'))
         audio = p.get('audio-pts')
         reader = p.get('demuxer-cache-state')['reader-pts']
         p.wait(lambda: p.get('audio-pts') > audio + 2)
-        self.assertAlmostEqual(p.get('demuxer-cache-state')['reader-pts'], reader, delta=.1)
+        self.assertAlmostEqual(p.get('demuxer-cache-state')['reader-pts'], reader, delta=0.1)
         last_position = [p.get('time-pos')]
+
         def recovered():
             if p.get('user-data/youtube-quality/route') != 'primary':
                 return True
@@ -99,6 +120,7 @@ class MpvTests(unittest.TestCase):
             if position is not None:
                 last_position[0] = position
             return False
+
         p.wait(recovered, timeout=13)
         p.wait_loaded('authenticated')
         self.assertAlmostEqual(float(p.get('file-local-options/start')), last_position[0], delta=1)
@@ -114,8 +136,9 @@ class MpvTests(unittest.TestCase):
         self.assertTrue(p.get('pause'))
         self.assertTrue(p.get('ytdl'), 'error screen unloaded the extraction hook')
         self.assertEqual(p.get('playlist-count'), 1)
-        self.assertEqual((p.root / 'calls').read_text().splitlines(),
-                         ['primary', 'authenticated', 'token', 'hls', 'fallback'])
+        self.assertEqual(
+            (p.root / 'calls').read_text().splitlines(), ['primary', 'authenticated', 'token', 'hls', 'fallback']
+        )
         p.routes.write_text('{}')
         p.command('script-binding', 'youtube/youtube-retry')
         p.wait_loaded('primary')
@@ -131,38 +154,49 @@ class MpvTests(unittest.TestCase):
         p.wait(lambda: p.get('pause') is False)
 
     def test_browser_timestamp_overrides_watch_history(self):
-        for timestamp, routes, route in ((30, {}, 'primary'), (0, {'primary': 'fail'}, 'authenticated'),
-                                         (None, {}, 'primary')):
+        for timestamp, routes, route in (
+            (30, {}, 'primary'),
+            (0, {'primary': 'fail'}, 'authenticated'),
+            (None, {}, 'primary'),
+        ):
             with self.subTest(timestamp=timestamp), tempfile.TemporaryDirectory() as history:
                 url = URL if timestamp is None else URL + f'?t={timestamp}'
                 options = ('--pause=yes', '--resume-playback=yes', f'--watch-later-directory={history}')
                 previous = self.player(url=url, options=options)
                 previous.wait_loaded('primary')
                 previous.command('seek', 42.5, 'absolute+exact')
-                previous.wait(lambda: abs((previous.get('time-pos') or 0) - 42.5) < .2
-                              and not previous.get('seeking'))
+                previous.wait(
+                    lambda previous=previous: (
+                        abs((previous.get('time-pos') or 0) - 42.5) < 0.2 and not previous.get('seeking')
+                    )
+                )
                 self.assertEqual(previous.command('write-watch-later-config')['error'], 'success')
                 self.assertTrue(list(Path(history).iterdir()))
                 current = self.player(routes, url=url, options=options)
                 current.wait_loaded(route)
-                self.assertAlmostEqual(current.get('time-pos'), 42.5 if timestamp is None else timestamp, delta=.2)
+                self.assertAlmostEqual(current.get('time-pos'), 42.5 if timestamp is None else timestamp, delta=0.2)
                 current.command('seek', 45.5, 'absolute+exact')
-                current.wait(lambda: abs((current.get('time-pos') or 0) - 45.5) < .2
-                             and not current.get('seeking'))
+                current.wait(
+                    lambda current=current: (
+                        abs((current.get('time-pos') or 0) - 45.5) < 0.2 and not current.get('seeking')
+                    )
+                )
                 calls = len((current.root / 'calls').read_text().splitlines())
                 current.command('script-binding', 'youtube/youtube-retry')
-                current.wait(lambda: len((current.root / 'calls').read_text().splitlines()) > calls)
+                current.wait(
+                    lambda current=current, calls=calls: len((current.root / 'calls').read_text().splitlines()) > calls
+                )
                 current.wait_loaded(route)
-                self.assertAlmostEqual(current.get('time-pos'), 45.5, delta=.2)
+                self.assertAlmostEqual(current.get('time-pos'), 45.5, delta=0.2)
 
     def test_browser_timestamp_round_trip(self):
         for routes, route in (({}, 'primary'), ({'primary': 'fail'}, 'authenticated')):
             with self.subTest(route=route):
                 p = self.player(routes, url=URL + '?t=30', options=('--pause=yes',))
                 p.wait_loaded(route)
-                self.assertAlmostEqual(p.get('time-pos'), 30, delta=.2)
+                self.assertAlmostEqual(p.get('time-pos'), 30, delta=0.2)
                 p.command('seek', 42.5, 'absolute+exact')
-                p.wait(lambda: abs((p.get('time-pos') or 0) - 42.5) < .2 and not p.get('seeking'))
+                p.wait(lambda p=p: abs((p.get('time-pos') or 0) - 42.5) < 0.2 and not p.get('seeking'))
                 p.command('script-binding', 'youtube/youtube-browser')
                 destination = p.root / 'browser-url'
                 p.wait(destination.exists)
@@ -170,7 +204,7 @@ class MpvTests(unittest.TestCase):
                 self.assertTrue(p.get('pause'))
                 calls = len((p.root / 'calls').read_text().splitlines())
                 p.command('loadfile', URL)
-                p.wait(lambda: len((p.root / 'calls').read_text().splitlines()) > calls)
+                p.wait(lambda p=p, calls=calls: len((p.root / 'calls').read_text().splitlines()) > calls)
                 p.wait_loaded('primary' if not routes else 'authenticated')
                 self.assertLess(p.get('time-pos'), 1, 'browser timestamp leaked into a new load')
 
@@ -184,7 +218,7 @@ class MpvTests(unittest.TestCase):
         p.command('script-binding', 'youtube/youtube-retry')
         p.wait(lambda: len((p.root / 'calls').read_text().splitlines()) == 2)
         p.wait_loaded('primary')
-        self.assertAlmostEqual(p.get('time-pos'), position, delta=.2)
+        self.assertAlmostEqual(p.get('time-pos'), position, delta=0.2)
         self.assertTrue(p.get('pause'))
         p.command('playlist-next')
         p.wait(lambda: len((p.root / 'calls').read_text().splitlines()) == 3)
@@ -205,12 +239,22 @@ class MpvTests(unittest.TestCase):
         p.command('script-binding', 'youtube/youtube-retry')
         p.wait(lambda: len((p.root / 'calls').read_text().splitlines()) == 7)
         p.wait_loaded('primary')
-        self.assertAlmostEqual(p.get('time-pos'), position, delta=.2)
+        self.assertAlmostEqual(p.get('time-pos'), position, delta=0.2)
         self.assertTrue(p.get('pause'))
 
     def test_retained_authenticated_stream_survives_failed_alternatives(self):
-        p = self.player({'*': 'fail', 'authenticated': {'width': 1920, 'height': 1080,
-            'media': 'header', 'http_headers': {'Referer': 'https://example.test/retained'}}}, provider=False)
+        p = self.player(
+            {
+                '*': 'fail',
+                'authenticated': {
+                    'width': 1920,
+                    'height': 1080,
+                    'media': 'header',
+                    'http_headers': {'Referer': 'https://example.test/retained'},
+                },
+            },
+            provider=False,
+        )
         p.wait_loaded('retained')
         self.assertEqual((p.root / 'calls').read_text().splitlines(), ['primary', 'authenticated', 'hls'])
         self.assertEqual(p.get('media-title'), 'Offline fixture')
@@ -227,20 +271,28 @@ class MpvTests(unittest.TestCase):
     def test_unusable_retained_stream_falls_back_without_a_loop(self):
         for metadata in ({'media': 'denied'}, {'available_at': time.time() + 3600}):
             with self.subTest(metadata=metadata):
-                p = self.player({'*': 'fail', 'authenticated': {'width': 1920, 'height': 1080, **metadata},
-                                 'fallback': 'play'}, provider=False)
+                p = self.player(
+                    {'*': 'fail', 'authenticated': {'width': 1920, 'height': 1080, **metadata}, 'fallback': 'play'},
+                    provider=False,
+                )
                 p.wait_loaded('fallback')
-                self.assertEqual((p.root / 'calls').read_text().splitlines(),
-                                 ['primary', 'authenticated', 'hls', 'fallback'])
+                self.assertEqual(
+                    (p.root / 'calls').read_text().splitlines(), ['primary', 'authenticated', 'hls', 'fallback']
+                )
                 self.assertEqual(p.get('playlist-count'), 1)
 
     def test_retained_file_is_private_and_removed_on_cancellation(self):
         for action in ('browser', 'shutdown', 'kill'):
             with self.subTest(action=action):
-                p = self.player({'*': 'fail', 'authenticated': {'width': 1920, 'height': 1080,
-                                                              'media': 'stall'}}, provider=False)
-                p.wait(lambda: p.get('user-data/youtube-quality/route') == 'retained'
-                       and p.get('file-local-options/ytdl-raw-options').get('frameferry-candidate'))
+                p = self.player(
+                    {'*': 'fail', 'authenticated': {'width': 1920, 'height': 1080, 'media': 'stall'}}, provider=False
+                )
+                p.wait(
+                    lambda p=p: (
+                        p.get('user-data/youtube-quality/route') == 'retained'
+                        and p.get('file-local-options/ytdl-raw-options').get('frameferry-candidate')
+                    )
+                )
                 candidate = Path(p.get('file-local-options/ytdl-raw-options')['frameferry-candidate'])
                 marker = str(candidate) + ' (deleted)'
                 self.assertFalse(candidate.exists(), 'signed URLs have a named temporary file')
@@ -256,7 +308,7 @@ class MpvTests(unittest.TestCase):
                 self.assertEqual(descriptor.stat().st_mode & 0o777, 0o600)
                 if action == 'browser':
                     p.command('script-binding', 'youtube/youtube-browser')
-                    p.wait(lambda: p.get('media-title') == 'Continue in browser')
+                    p.wait(lambda p=p: p.get('media-title') == 'Continue in browser')
                 else:
                     if action == 'kill':
                         p.process.kill()
@@ -302,10 +354,14 @@ class MpvTests(unittest.TestCase):
         p.command('seek', 10, 'absolute+exact')
         p.wait(lambda: (p.get('time-pos') or 0) >= 9.9 and not p.get('seeking'))
         p.command('set_property', 'pause', True)
-        p.command('set_property', 'chapter-list', [
-            {'time': 10, 'title': 'sponsor segment start (fixture)'},
-            {'time': 30, 'title': 'sponsor segment end (fixture)'},
-        ])
+        p.command(
+            'set_property',
+            'chapter-list',
+            [
+                {'time': 10, 'title': 'sponsor segment start (fixture)'},
+                {'time': 30, 'title': 'sponsor segment end (fixture)'},
+            ],
+        )
         p.wait(lambda: p.get('user-data/sponsorblock/available'))
         self.assertLess(p.get('time-pos'), 20, 'paused playback was skipped')
         p.command('script-binding', 'sponsorblock_chapter_skip/sponsorblock-toggle')
@@ -330,13 +386,20 @@ class MpvTests(unittest.TestCase):
     def test_continuous_data_cannot_bypass_total_deadline(self):
         cases = [
             (self.player({'*': 'stall'}), ['primary', 'authenticated', 'token', 'fallback']),
-            (self.player({'*': 'stall', 'primary': 'fail',
-                          'authenticated': {'width': 1920, 'height': 1080, 'media': 'stall'}}),
-             ['primary', 'authenticated', 'token', 'hls', 'fallback']),
+            (
+                self.player(
+                    {
+                        '*': 'stall',
+                        'primary': 'fail',
+                        'authenticated': {'width': 1920, 'height': 1080, 'media': 'stall'},
+                    }
+                ),
+                ['primary', 'authenticated', 'token', 'hls', 'fallback'],
+            ),
         ]
         for p, expected in cases:
             with self.subTest(calls=expected):
-                p.wait(lambda: p.get('media-title') == 'YouTube playback failed', timeout=33)
+                p.wait(lambda p=p: p.get('media-title') == 'YouTube playback failed', timeout=33)
                 elapsed = time.monotonic() - p.started
                 self.assertLess(elapsed, 32)
                 self.assertGreater(elapsed, 25)

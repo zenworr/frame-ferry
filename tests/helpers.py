@@ -3,16 +3,15 @@
 import importlib.machinery
 import importlib.util
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'scripts'))
 
 
 def load_script(name):
@@ -48,7 +47,9 @@ class ExtractorFixture(unittest.TestCase):
         self.state.mkdir(parents=True)
         (self.state / 'yt-dlp-update.lock').write_text(str(time.time() + 86400))
         self.fake = self.home / 'yt-dlp'
-        self.fake.write_text(f'#!{sys.executable}\n' + '''import json, os, subprocess, sys, time
+        self.fake.write_text(
+            f'#!{sys.executable}\n'
+            + """import json, os, subprocess, sys, time
 from pathlib import Path
 home = Path.home()
 with (home / 'calls').open('a') as f:
@@ -70,12 +71,18 @@ if os.environ.get('FAKE_FAIL'):
 info = {'id':'test', 'title':'test', 'url':'https://example.test/video'}
 info.update(json.loads(os.environ.get('FAKE_INFO', '{}')))
 print(json.dumps(info))
-''')
+"""
+        )
         self.fake.chmod(0o755)
         (self.home / 'deno').symlink_to(sys.executable)
-        self.env = {**os.environ, 'HOME': str(self.home), 'XDG_STATE_HOME': str(self.home / '.local/state'),
-                    'XDG_DATA_HOME': str(self.home / '.local/share'), 'XDG_CONFIG_HOME': str(self.home / '.config'),
-                    'PATH': str(self.home) + os.pathsep + os.environ['PATH']}
+        self.env = {
+            **os.environ,
+            'HOME': str(self.home),
+            'XDG_STATE_HOME': str(self.home / '.local/state'),
+            'XDG_DATA_HOME': str(self.home / '.local/share'),
+            'XDG_CONFIG_HOME': str(self.home / '.config'),
+            'PATH': str(self.home) + os.pathsep + os.environ['PATH'],
+        }
         self.addCleanup(self.stop_fixture)
 
     def stop_fixture(self):
@@ -90,12 +97,14 @@ print(json.dumps(info))
 
     def calls(self):
         import json
+
         path = self.home / 'calls'
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def run_wrapper(self, *args):
-        return subprocess.run([sys.executable, str(ROOT / 'scripts/yt-dlp-mpv'), *args],
-                              capture_output=True, env=self.env, timeout=5)
+        return subprocess.run(
+            [sys.executable, str(ROOT / 'scripts/yt-dlp-mpv'), *args], capture_output=True, env=self.env, timeout=5
+        )
 
     def install_provider(self):
         provider = self.home / '.local/share/frameferry/bgutil'

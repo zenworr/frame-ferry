@@ -1,25 +1,34 @@
 import io
 import json
 import os
+import shutil
 import signal
 import socket
-from pathlib import Path
 import struct
-import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from helpers import ROOT, load_script
 from frameferry_config import DEFAULTS
+
+from .helpers import ROOT, load_script
+from .mpv_harness import Player
 
 native = load_script('frameferry-native')
 
 
 def request(**changes):
-    return {'version': 1, 'action': 'play', 'url': 'https://www.youtube.com/watch?v=fixture&t=99',
-            'position': 30, 'quality': 1080, 'fullscreen': False, **changes}
+    return {
+        'version': 1,
+        'action': 'play',
+        'url': 'https://www.youtube.com/watch?v=fixture&t=99',
+        'position': 30,
+        'quality': 1080,
+        'fullscreen': False,
+        **changes,
+    }
 
 
 class NativeTests(unittest.TestCase):
@@ -30,13 +39,13 @@ class NativeTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('node'), 'Node.js is needed for extension tests')
     def test_extension_behavior(self):
-        result = subprocess.run(['node', str(ROOT / 'tests/test_extension.mjs')],
-                                capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            ['node', str(ROOT / 'tests/test_extension.mjs')], capture_output=True, text=True, timeout=10
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(shutil.which('mpv'), 'mpv is required')
     def test_real_native_handoff_starts_at_position_and_confirms_playback(self):
-        from mpv_harness import Player
         player = Player()
         self.addCleanup(player.close)
         config = player.root / 'native-config'
@@ -44,6 +53,7 @@ class NativeTests(unittest.TestCase):
         (config / 'mpv.conf').write_text('vo=null\nao=null\npause=yes\nkeep-open=yes\n')
         observed = []
         original = native.wait_for_playback
+
         def probe(process, path, deadline):
             original(process, path, deadline)
             with socket.socket(socket.AF_UNIX) as ipc:
@@ -55,29 +65,32 @@ class NativeTests(unittest.TestCase):
                         if event.get('request_id') == 1:
                             observed.append(event['data'])
                             break
-        with patch.object(native, 'CONFIG', config), patch.object(native, 'STATE', player.root/('native-state-' + 'x' * 80)), \
-                patch.object(native, 'wait_for_playback', side_effect=probe):
+
+        with (
+            patch.object(native, 'CONFIG', config),
+            patch.object(native, 'STATE', player.root / ('native-state-' + 'x' * 80)),
+            patch.object(native, 'wait_for_playback', side_effect=probe),
+        ):
             reply = native.handle(request(url=f'http://127.0.0.1:{player.server.server_port}/audio.wav', quality=0))
         try:
             self.assertTrue(reply['ok'])
-            self.assertAlmostEqual(observed[0], 30, delta=.2)
+            self.assertAlmostEqual(observed[0], 30, delta=0.2)
         finally:
             os.kill(reply['pid'], signal.SIGTERM)
             os.waitpid(reply['pid'], 0)
 
     @unittest.skipUnless(shutil.which('mpv'), 'mpv is required')
     def test_native_reports_the_safe_player_failure_reason(self):
-        from mpv_harness import Player
         player = Player({'*': 'fail'})
         self.addCleanup(player.close)
         player.wait(lambda: player.get('user-data/youtube-quality/slate'))
         import time
+
         with self.assertRaisesRegex(RuntimeError, 'YouTube requested account access'):
             native.wait_for_playback(player.process, player.root / 'ipc', time.monotonic() + 2)
 
     @unittest.skipUnless(shutil.which('mpv'), 'mpv is required')
     def test_custom_thumbnail_executable_reaches_mpv_without_splitting_the_path(self):
-        from mpv_harness import Player
         path = '/opt/player, with spaces/mpv'
         with patch.object(native, 'executable', return_value=path):
             command = native.command_for(request(), Path('/tmp/ipc'))
@@ -88,12 +101,26 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(player.get('options/script-opts')['thumbfast-mpv_path'], path)
 
     def test_fixed_schema_rejects_unsafe_values(self):
-        for value in (None, [], request(url='file:///tmp/movie'), request(url='https://user:secret@example.org'),
-                      request(url='https://example.org\n--script=evil'), request(url='https://example.org:broken'),
-                      request(position=True), request(position=float('nan')), request(position=float('inf')),
-                      request(position=-1), request(quality=999), request(quality=True), request(fullscreen='yes'),
-                      request(action='shell'), request(version=2), request(version=True), request(version=1.0),
-                      request(args=['--script=evil'])):
+        for value in (
+            None,
+            [],
+            request(url='file:///tmp/movie'),
+            request(url='https://user:secret@example.org'),
+            request(url='https://example.org\n--script=evil'),
+            request(url='https://example.org:broken'),
+            request(position=True),
+            request(position=float('nan')),
+            request(position=float('inf')),
+            request(position=-1),
+            request(quality=999),
+            request(quality=True),
+            request(fullscreen='yes'),
+            request(action='shell'),
+            request(version=2),
+            request(version=True),
+            request(version=1.0),
+            request(args=['--script=evil']),
+        ):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 native.validate(value)
 
@@ -115,6 +142,7 @@ class NativeTests(unittest.TestCase):
         class Partial(io.BytesIO):
             def read(self, size):
                 return super().read(min(size, 2))
+
         payload = json.dumps(request()).encode()
         output = io.BytesIO()
         with patch.object(native, 'handle', return_value={'ok': True, 'message': 'ready'}) as handler:
@@ -131,18 +159,21 @@ class NativeTests(unittest.TestCase):
             self.assertFalse(json.loads(output.getvalue()[4:])['ok'])
 
     def test_failed_playback_stops_new_player_and_preserves_browser(self):
-        with tempfile.TemporaryDirectory() as temp, \
-                patch.object(native, 'CONFIG', Path(temp)), patch.object(native, 'STATE', Path(temp)/'state'), \
-                patch.object(native, 'command_for', return_value=['mpv']), \
-                patch.object(native.subprocess, 'Popen') as spawn, \
-                patch.object(native, 'wait_for_playback', side_effect=TimeoutError('not ready')):
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(native, 'CONFIG', Path(temp)),
+            patch.object(native, 'STATE', Path(temp) / 'state'),
+            patch.object(native, 'command_for', return_value=['mpv']),
+            patch.object(native.subprocess, 'Popen') as spawn,
+            patch.object(native, 'wait_for_playback', side_effect=TimeoutError('not ready')),
+        ):
             (Path(temp) / 'mpv.conf').touch()
             spawn.return_value.poll.return_value = None
             with self.assertRaises(RuntimeError) as error:
                 native.handle(request())
-            log = next((Path(temp)/'state').glob('player-*.log'))
+            log = next((Path(temp) / 'state').glob('player-*.log'))
             self.assertIn('not ready', str(error.exception))
             self.assertIn(str(log), str(error.exception))
             spawn.return_value.terminate.assert_called_once()
             self.assertNotIn('shell', spawn.call_args.kwargs)
-            self.assertEqual(next((Path(temp)/'state').glob('player-*.log')).stat().st_mode & 0o777, 0o600)
+            self.assertEqual(next((Path(temp) / 'state').glob('player-*.log')).stat().st_mode & 0o777, 0o600)

@@ -1,4 +1,4 @@
-local options = {categories = "sponsor", interval = 0.10, lead_time = 0.25}
+local options = { categories = "sponsor", interval = 0.10, lead_time = 0.25 }
 require("mp.options").read_options(options, "sponsorblock_chapter_skip")
 
 local enabled, ranges, timer = true, {}, nil
@@ -25,11 +25,13 @@ local function refresh_ranges(_, chapters)
             if edge == "start" then
                 starts[id] = chapter.time
             elseif edge == "end" and starts[id] and chapter.time > starts[id] then
-                found[#found + 1] = {start_time = starts[id], end_time = chapter.time}
+                found[#found + 1] = { start_time = starts[id], end_time = chapter.time }
             end
         end
     end
-    table.sort(found, function(a, b) return a.start_time < b.start_time end)
+    table.sort(found, function(a, b)
+        return a.start_time < b.start_time
+    end)
     ranges = {}
     for _, range in ipairs(found) do
         local previous = ranges[#ranges]
@@ -43,9 +45,13 @@ local function refresh_ranges(_, chapters)
 end
 
 local function check_ranges()
-    if not enabled or mp.get_property_bool("pause", false) then return end
+    if not enabled or mp.get_property_bool("pause", false) then
+        return
+    end
     local pos = mp.get_property_number("time-pos")
-    if not pos then return end
+    if not pos then
+        return
+    end
     for _, range in ipairs(ranges) do
         if pos >= range.start_time - options.lead_time and pos < range.end_time then
             mp.osd_message("SponsorBlock: skipped segment")

@@ -1,0 +1,21 @@
+{
+  "name": "frame-ferry-dev",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.13.0 || >=24"
+  },
+  "scripts": {
+    "lint": "eslint --max-warnings=0 extension tests/*.mjs eslint.config.js",
+    "audit": "npm audit --audit-level=low",
+    "format:check": "prettier --check extension tests/*.mjs eslint.config.js package.json .github && stylua --check config/mpv/scripts tests/*.lua",
+    "format": "prettier --write extension tests/*.mjs eslint.config.js package.json .github && stylua config/mpv/scripts tests/*.lua"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
+    "globals": "17.12.0",
+    "prettier": "3.9.9",
+    "@johnnymorganz/stylua-bin": "2.5.2"
+  }
+}

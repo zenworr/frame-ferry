@@ -4,11 +4,16 @@
 import base64
 import hashlib
 import json
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
-BROWSERS = {'helium': 'net.imput.helium', 'chromium': 'chromium', 'chrome': 'google-chrome',
-            'brave': 'BraveSoftware/Brave-Browser'}
+EXTENSION_ID_HEX_LENGTH = 32
+BROWSERS = {
+    'helium': 'net.imput.helium',
+    'chromium': 'chromium',
+    'chrome': 'google-chrome',
+    'brave': 'BraveSoftware/Brave-Browser',
+}
 
 
 def digest(path):
@@ -17,7 +22,7 @@ def digest(path):
 
 def extension_id(manifest):
     key = json.loads(manifest.read_text())['key']
-    value = hashlib.sha256(base64.b64decode(key)).hexdigest()[:32]
+    value = hashlib.sha256(base64.b64decode(key)).hexdigest()[:EXTENSION_ID_HEX_LENGTH]
     return ''.join(chr(ord('a') + int(char, 16)) for char in value)
 
 

@@ -39,6 +39,8 @@ Continue reads the main-page video's position when clicked. It does not read pos
 
 For YouTube, a handoff timestamp overrides saved history. Retry keeps the current position. Accessible browser videos are paused only after mpv confirms playback; frames that cannot verify the original page stay playing.
 
+Changing the saved default resolution also updates the current panel's resolution unless you have selected a different per-launch limit.
+
 The resolution setting is a ceiling. The player badge shows the actual stream dimensions. YouTube recovery tries additional access methods before reducing quality:
 
 ```text
@@ -49,7 +51,7 @@ Selected quality → additional access methods → earlier usable stream
 
 Recovery has a 30-second default limit; see [Frame Ferry configuration](../README.md#frame-ferry-configuration) to change it. Account access and token support require setup below; unavailable routes are skipped or fail quickly. Provider restrictions can still prevent playback.
 
-During recorded YouTube playback, recovery starts automatically after 10 seconds of continuous buffering, or when the video stream stops advancing for 10 seconds while audio continues. Pausing, seeking, or resumed playback cancels the timer. Recovery keeps your position and tries the remaining access methods before lowering quality. If the fallback also stalls, recovery stops at the error screen rather than repeating indefinitely. No shortcut is required; `Alt+q` remains an optional way to go directly to the fast fallback.
+During recorded YouTube playback, recovery starts automatically after the configured `stall_timeout` (10 seconds by default) of continuous buffering, or when the video stream stops advancing for that duration while audio continues. Pausing, seeking, or resumed playback cancels the timer. Recovery keeps your position and tries the remaining access methods before lowering quality. If the fallback also stalls, recovery stops at the error screen rather than repeating indefinitely. No shortcut is required; `Alt+q` remains an optional way to go directly to the fast fallback.
 
 ## Account access and updates
 
@@ -63,7 +65,7 @@ auto_update=no
 
 A nonempty `cookies_browser` allows signed-in recovery through yt-dlp. Use `cookies_initial=yes` to use it on the first attempt too. The extension itself never reads cookies.
 
-`auto_update=yes` permits one background yt-dlp update check per day. Use it only for a yt-dlp installation you manage yourself, not a system-managed package.
+`auto_update=yes` permits one background yt-dlp update attempt per `update_interval_hours` (24 hours by default). Use it only for a yt-dlp installation you manage yourself, not a system-managed package.
 
 For optional token-assisted recovery, install Git, Node.js 22+, and npm, then run:
 

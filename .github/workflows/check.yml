@@ -6,11 +6,32 @@ jobs:
   offline:
     runs-on: ubuntu-latest
     container: archlinux:base
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.14']
     steps:
       - name: Install test tools
-        run: pacman -Syu --noconfirm git make python lua mpv patch nodejs diffutils
-      - uses: actions/checkout@v4
+        run: pacman -Syu --noconfirm git make python uv lua luacheck mpv ffmpeg patch nodejs npm diffutils
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Select Python
+        run: |
+          uv python install '${{ matrix.python }}'
+          echo "PYTHON=$(uv python find '${{ matrix.python }}')" >> "$GITHUB_ENV"
+      - run: make dev-setup
       - run: make check
-      - run: make test-slow
+      - if: matrix.python == '3.14'
+        run: make test-slow
+      - run: make audit
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: low

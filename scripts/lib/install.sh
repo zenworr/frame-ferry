@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 timestamp=$(date +%Y%m%dT%H%M%S.%N)
+# Component installers use this value after sourcing the library.
+# shellcheck disable=SC2034
 mpv_config="${MPV_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/frameferry/mpv}"
 
 for name in MPV_CONFIG_DIR XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME; do
@@ -17,9 +19,11 @@ require_commands() {
   done
 }
 
+download_timeout=60
+connect_timeout=10
 download() {
   mkdir -p -- "$(dirname -- "$2")"
-  curl -fsSL --max-time 60 --connect-timeout 10 -o "$2" -- "$1"
+  curl -fsSL --max-time "$download_timeout" --connect-timeout "$connect_timeout" -o "$2" -- "$1"
 }
 
 install_file() (

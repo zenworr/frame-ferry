@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: MIT
 import {settings, sameVideo} from './settings.js';
-const $ = id => document.getElementById(id);
-let preferences, tab, captured, busy = false, pending = false, allowed = false;
+const SECONDS_PER_MINUTE = 60;
+const CLOCK_DIGITS = 2;
+const $ = (id) => document.getElementById(id);
+let preferences,
+  tab,
+  captured,
+  busy = false,
+  pending = false,
+  allowed = false;
 function report(message, error = false) {
   $('status').textContent = message;
   $('status').classList.toggle('error', error);
@@ -15,7 +22,7 @@ function buttons() {
   $('send').disabled = $('alternate').disabled = !allowed || busy || pending;
 }
 function showStatus(state) {
-  pending = !!state?.pending;
+  pending = Boolean(state?.pending);
   buttons();
   if (state && sameVideo(state.page, tab.url)) report(state.text, state.error);
   else report(pending ? 'A handoff from this tab is still in progress.' : '');
@@ -26,10 +33,19 @@ async function send(resume) {
   buttons();
   report('Opening mpv… The browser keeps playing until mpv is ready.');
   try {
-    const response = await chrome.runtime.sendMessage({action: 'play', tabId: tab.id, resume, quality: Number($('quality').value)});
+    const response = await chrome.runtime.sendMessage({
+      action: 'play',
+      tabId: tab.id,
+      resume,
+      quality: Number($('quality').value),
+    });
     report(response.message, !response.ok);
-  } catch (error) { report(error.message, true); }
-  finally { busy = false; buttons(); }
+  } catch (error) {
+    report(error.message, true);
+  } finally {
+    busy = false;
+    buttons();
+  }
 }
 async function init() {
   preferences = await settings();
@@ -37,9 +53,17 @@ async function init() {
   $('quality').value = $('default-quality').value = String(preferences.quality);
   for (const key of ['resume', 'pause', 'fullscreen', 'autoContinue', 'default-quality']) {
     $(key).addEventListener('change', async () => {
-      preferences = {resume: $('resume').checked, pause: $('pause').checked,
-        fullscreen: $('fullscreen').checked, autoContinue: $('autoContinue').checked,
-        quality: Number($('default-quality').value)};
+      const previousQuality = preferences.quality;
+      preferences = {
+        resume: $('resume').checked,
+        pause: $('pause').checked,
+        fullscreen: $('fullscreen').checked,
+        autoContinue: $('autoContinue').checked,
+        quality: Number($('default-quality').value),
+      };
+      if (key === 'default-quality' && Number($('quality').value) === previousQuality) {
+        $('quality').value = String(preferences.quality);
+      }
       await chrome.storage.local.set({preferences});
       labels();
       if (!busy && !pending) report('Defaults saved on this device.');
@@ -51,14 +75,16 @@ async function init() {
     try {
       const response = await chrome.runtime.sendMessage({action: 'check'});
       report(response.message, !response.ok);
-    } catch (error) { report(error.message, true); }
+    } catch (error) {
+      report(error.message, true);
+    }
   });
   [tab] = await chrome.tabs.query({active: true, currentWindow: true});
   $('page-title').textContent = tab?.title || tab?.url || 'No active page';
   allowed = /^https?:\/\//i.test(tab?.url || '');
   captured = allowed ? await chrome.runtime.sendMessage({action: 'inspect', tabId: tab.id}) : null;
   $('position').textContent = captured
-    ? `At ${Math.floor(captured.position / 60)}:${String(captured.position % 60).padStart(2, '0')} · captured again when you click`
+    ? `At ${Math.floor(captured.position / SECONDS_PER_MINUTE)}:${String(captured.position % SECONDS_PER_MINUTE).padStart(CLOCK_DIGITS, '0')} · captured again when you click`
     : 'No recorded-video position found. Open uses the URL or saved position.';
   labels();
   buttons();
@@ -76,4 +102,4 @@ async function init() {
     if (preferences.autoContinue && !pending) await send(true);
   }
 }
-init().catch(error => report(error.message, true));
+init().catch((error) => report(error.message, true));

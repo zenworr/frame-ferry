@@ -1,0 +1,16 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-include = [
+  "scripts/doctor", "scripts/frameferry-native", "scripts/setup-frameferry",
+  "scripts/yt-dlp-mpv", "scripts/yt-dlp-update-background",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "RUF", "PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004"]
+
+[tool.ruff.format]
+quote-style = "single"

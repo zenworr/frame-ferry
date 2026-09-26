@@ -1,22 +1,60 @@
 .DEFAULT_GOAL := check
-.PHONY: check syntax test test-slow install doctor
+.PHONY: check check-tools dev-setup lint format syntax dependency-check audit test test-slow install doctor
 
 PYTHON ?= python3
+DEV_BIN := .venv/bin
+PYTHON_SOURCES := scripts tests
+PYTHON_ENTRYPOINTS := scripts/frameferry-native scripts/setup-frameferry scripts/doctor scripts/yt-dlp-mpv scripts/yt-dlp-update-background
 
-check: syntax test
+# Network access is limited to these explicit setup and audit targets.
+dev-setup:
+	$(PYTHON) -m venv .venv
+	$(DEV_BIN)/python -m pip install --require-hashes -r requirements-dev.txt
+	npm ci --ignore-scripts
 
-syntax:
-	$(PYTHON) -m py_compile scripts/*.py scripts/frameferry-native scripts/setup-frameferry scripts/doctor scripts/yt-dlp-mpv scripts/yt-dlp-update-background
-	@if command -v node >/dev/null; then for file in extension/*.js tests/*.mjs; do node --check "$$file" || exit; done; fi
+check: lint syntax dependency-check test
+
+check-tools:
+	@for tool in $(PYTHON) node npm lua luac luacheck mpv ffmpeg bash curl patch cmp; do \
+		command -v "$$tool" >/dev/null || { echo "Missing $$tool. See docs/development.md." >&2; exit 1; }; \
+	done
+	@test -x $(DEV_BIN)/ruff -a -x $(DEV_BIN)/shellcheck -a -d node_modules || \
+		{ echo 'Run make dev-setup before make check.' >&2; exit 1; }
+
+lint: check-tools
+	$(DEV_BIN)/ruff check $(PYTHON_SOURCES)
+	$(DEV_BIN)/ruff format --check $(PYTHON_SOURCES)
+	npm run lint
+	npm run format:check
+	$(DEV_BIN)/shellcheck scripts/*.sh scripts/lib/*.sh
+	luacheck config/mpv/scripts tests
+
+format:
+	$(DEV_BIN)/ruff format $(PYTHON_SOURCES)
+	$(DEV_BIN)/ruff check --fix $(PYTHON_SOURCES)
+	npm run format
+
+syntax: check-tools
+	$(PYTHON) -m py_compile scripts/*.py $(PYTHON_ENTRYPOINTS)
+	@for file in extension/*.js tests/*.mjs; do node --check "$$file" || exit; done
 	@for file in scripts/*.sh scripts/lib/*.sh; do bash -n "$$file" || exit; done
 	@for file in config/mpv/scripts/*.lua tests/*.lua; do luac -p "$$file" || exit; done
 
+dependency-check: check-tools
+	$(DEV_BIN)/python scripts/check_dev_dependencies.py
+	$(DEV_BIN)/python -m pip check
+	npm ls --all >/dev/null
+
+audit:
+	$(DEV_BIN)/pip-audit --strict --require-hashes --disable-pip -r requirements-dev.txt
+	npm run audit
+
 test:
-	$(PYTHON) -m unittest discover -s tests -v
+	$(PYTHON) -m unittest discover -s tests -t . -v
 	@for file in tests/test_*.lua; do lua "$$file" || exit; done
 
-test-slow:
-	MPV_SLOW_TESTS=1 $(PYTHON) -m unittest discover -s tests -p test_mpv.py -v
+test-slow: check-tools
+	MPV_SLOW_TESTS=1 $(PYTHON) -m unittest discover -s tests -t . -p test_mpv.py -v
 
 install:
 	./scripts/install.sh

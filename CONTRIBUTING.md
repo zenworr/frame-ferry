@@ -1,6 +1,6 @@
 # Contributing
 
-Keep changes small and add regression tests. Run `make check` and `make test-slow`; see [development](docs/development.md) for dependencies and browser checks.
+Keep changes small and add regression tests. Run `make check`, `make test-slow`, and `make audit`; see [development](docs/development.md) for setup and browser checks. Lint and formatting checks must pass without warnings. Name policy values, validate user settings, and update lock files when changing dependencies.
 
 Bug reports should include tool versions, expected and actual behavior, and a reproducible example. Remove sensitive data from logs before sharing them. Report security issues as described in [SECURITY.md](SECURITY.md).
 

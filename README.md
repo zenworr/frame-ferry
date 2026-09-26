@@ -59,15 +59,24 @@ The installer creates `~/.config/frameferry/config.json` (under `$XDG_CONFIG_HOM
   "deno": "",
   "recovery_timeout": 30,
   "startup_timeout": 38,
+  "stall_timeout": 10,
+  "http_chunk_size": 1048576,
+  "log_retention": 20,
+  "update_interval_hours": 24,
   "proxy": ""
 }
 ```
 
 - **Executables:** empty values search `PATH`, then `~/.local/bin`. Set absolute executable paths for custom installations. You can create this file before installation if the tools are not on `PATH`.
 - **Timeouts:** seconds. `recovery_timeout` sets the YouTube recovery budget (10–300) and scales its route and extraction timeouts. `startup_timeout` sets how long the extension waits for playback (maximum 600); it must be at least 8 seconds longer than recovery.
+- **Stall recovery:** `stall_timeout` is the continuous stall duration before automatic recovery (3–120 seconds).
+- **HTTP requests:** `http_chunk_size` sets the request size for eligible YouTube VOD streams on FFmpeg 9+ (65,536–8,388,608 bytes). Set `0` to use mpv's normal HTTP behavior. Explicit mpv transport options take priority.
+- **Logs and updates:** `log_retention` keeps 1–1,000 player logs. `update_interval_hours` sets 1–168 hours between update attempts, only when automatic yt-dlp updates are enabled.
 - **Proxy:** empty means direct access, ignoring inherited proxy environment variables. Set an HTTP proxy such as `http://127.0.0.1:8080` for extraction and media playback. HTTPS video requires CONNECT support. SOCKS and HTTPS proxy addresses are not supported. Inherited `no_proxy` rules are ignored so extraction and playback use the same route.
 
-These settings stay in the local helper; the extension cannot supply executable paths or proxy settings. Keep the file private if the proxy URL contains credentials. Updates preserve it. Changes apply to new handoffs; run `python3 scripts/doctor --browser helium` to check the configuration without network access.
+Omitted settings use the defaults above. Invalid values and unknown keys are rejected with an error. Protocol limits and internal polling intervals are fixed safety constants, not user settings.
+
+These settings stay in the local helper; the extension cannot supply executable paths or proxy settings. Keep the file private if the proxy URL contains credentials. Updates preserve it. Changes apply to new handoffs; an existing updater cooldown finishes before a new interval takes effect. Run `python3 scripts/doctor --browser helium` to check the configuration without network access.
 
 ## Update or remove
 

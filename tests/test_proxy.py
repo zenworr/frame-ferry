@@ -1,6 +1,5 @@
 import io
 import os
-from pathlib import Path
 import shutil
 import signal
 import ssl
@@ -10,10 +9,12 @@ import threading
 import unittest
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 
-from helpers import load_script
 from frameferry_config import DEFAULTS
+
+from .helpers import load_script
 
 
 @unittest.skipUnless(shutil.which('mpv') and shutil.which('openssl'), 'mpv and OpenSSL are required')
@@ -22,9 +23,27 @@ class ProxyTests(unittest.TestCase):
         native = load_script('frameferry-native')
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-                            '-subj', '/CN=video.invalid', '-keyout', str(root / 'key.pem'),
-                            '-out', str(root / 'cert.pem')], check=True, capture_output=True, timeout=10)
+            subprocess.run(
+                [
+                    'openssl',
+                    'req',
+                    '-x509',
+                    '-newkey',
+                    'rsa:2048',
+                    '-nodes',
+                    '-days',
+                    '1',
+                    '-subj',
+                    '/CN=video.invalid',
+                    '-keyout',
+                    str(root / 'key.pem'),
+                    '-out',
+                    str(root / 'cert.pem'),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.load_cert_chain(root / 'cert.pem', root / 'key.pem')
             output = io.BytesIO()
@@ -60,10 +79,13 @@ class ProxyTests(unittest.TestCase):
                             requests.append(line.decode().strip())
                             while reader.readline().strip():
                                 pass
-                            secured.sendall(f'HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n'.encode() + body)
+                            secured.sendall(
+                                f'HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n'.encode()
+                                + body
+                            )
 
             server = ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
-            thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .05}, daemon=True)
+            thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
             thread.start()
             self.addCleanup(server.server_close)
             self.addCleanup(server.shutdown)
@@ -72,18 +94,31 @@ class ProxyTests(unittest.TestCase):
             settings = DEFAULTS | {'proxy': proxy}
             processes = []
             popen = subprocess.Popen
+
             def spawn(*args, **kwargs):
                 process = popen(*args, **kwargs)
                 processes.append(process)
                 return process
-            with patch.object(native, 'CONFIG', root), patch.object(native, 'STATE', root / 'state'), \
-                    patch.object(native, 'load_config', return_value=settings), \
-                    patch.object(native.subprocess, 'Popen', side_effect=spawn), \
-                    patch.dict(os.environ, {'NO_PROXY': '*', 'no_proxy': '*', 'http_proxy': 'http://wrong.invalid:1'}):
+
+            with (
+                patch.object(native, 'CONFIG', root),
+                patch.object(native, 'STATE', root / 'state'),
+                patch.object(native, 'load_config', return_value=settings),
+                patch.object(native.subprocess, 'Popen', side_effect=spawn),
+                patch.dict(os.environ, {'NO_PROXY': '*', 'no_proxy': '*', 'http_proxy': 'http://wrong.invalid:1'}),
+            ):
                 for scheme in ('http', 'https'):
                     with self.subTest(scheme=scheme):
-                        reply = native.handle({'version': 1, 'action': 'play', 'url': f'{scheme}://video.invalid/fixture.wav',
-                                               'position': None, 'quality': 0, 'fullscreen': False})
+                        reply = native.handle(
+                            {
+                                'version': 1,
+                                'action': 'play',
+                                'url': f'{scheme}://video.invalid/fixture.wav',
+                                'position': None,
+                                'quality': 0,
+                                'fullscreen': False,
+                            }
+                        )
                         try:
                             self.assertTrue(reply['ok'])
                         finally:

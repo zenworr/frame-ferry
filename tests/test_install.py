@@ -1,14 +1,15 @@
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from helpers import ROOT
 from frameferry_install import atomic_write
+
+from .helpers import ROOT
 
 
 class InstallTests(unittest.TestCase):
@@ -22,19 +23,28 @@ class InstallTests(unittest.TestCase):
         self.data = self.home / 'custom-data'
         self.state = self.home / 'custom-state'
         self.player = self.config / 'frameferry/mpv'
-        self.env = {**os.environ, 'HOME': str(self.home), 'XDG_CONFIG_HOME': str(self.config),
-                    'XDG_DATA_HOME': str(self.data), 'XDG_STATE_HOME': str(self.state),
-                    'XDG_CACHE_HOME': str(self.home / '.cache'),
-                    'PATH': str(self.bin) + os.pathsep + os.environ['PATH']}
+        self.env = {
+            **os.environ,
+            'HOME': str(self.home),
+            'XDG_CONFIG_HOME': str(self.config),
+            'XDG_DATA_HOME': str(self.data),
+            'XDG_STATE_HOME': str(self.state),
+            'XDG_CACHE_HOME': str(self.home / '.cache'),
+            'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
+        }
         for name, version in (('mpv', 'mpv v0.41.0'), ('yt-dlp', '2026.08.19'), ('deno', 'deno 2.9.6')):
             self.executable(name, f'#!/bin/sh\necho "{version}"\n')
-        self.executable('curl', f'#!{sys.executable}\n' + '''import os, sys
+        self.executable(
+            'curl',
+            f'#!{sys.executable}\n'
+            + """import os, sys
 from pathlib import Path
 url = sys.argv[-1]
 if os.environ.get('FAIL_DOWNLOAD') and os.environ['FAIL_DOWNLOAD'] in url:
     sys.exit(22)
 Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
-''')
+""",
+        )
 
     def executable(self, name, text):
         path = self.bin / name
@@ -42,16 +52,26 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         path.chmod(0o755)
 
     def install(self, name='install.sh', *args):
-        return subprocess.run(['bash', str(ROOT / 'scripts' / name), *args], env=self.env, capture_output=True, timeout=10)
+        return subprocess.run(
+            ['bash', str(ROOT / 'scripts' / name), *args], env=self.env, capture_output=True, timeout=10
+        )
 
     def doctor(self):
-        return subprocess.run([sys.executable, str(ROOT / 'scripts/doctor')], env=self.env, capture_output=True, timeout=10)
+        return subprocess.run(
+            [sys.executable, str(ROOT / 'scripts/doctor')], env=self.env, capture_output=True, timeout=10
+        )
 
     def prepare(self):
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        for name in ('uosc/main.lua', 'uosc/lib/utils.lua', 'thumbfast.lua', 'sponsorblock.lua',
-                     'sponsorblock_shared/main.lua', 'sponsorblock_shared/sponsorblock.py'):
+        for name in (
+            'uosc/main.lua',
+            'uosc/lib/utils.lua',
+            'thumbfast.lua',
+            'sponsorblock.lua',
+            'sponsorblock_shared/main.lua',
+            'sponsorblock_shared/sponsorblock.py',
+        ):
             target = self.player / 'scripts' / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text('component fixture\n')
@@ -59,20 +79,37 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
     def test_component_installers_require_cmp_before_writing_files(self):
         for name in ('install-mpv-ui.sh', 'install-mpv-sponsorblock.sh'):
             with self.subTest(installer=name):
-                result = subprocess.run(['bash', '-c',
-                    'command() { if [[ "$1" == -v && "$2" == cmp ]]; then return 1; '
-                    'else builtin command "$@"; fi; }; source "$1"',
-                    'test', str(ROOT / 'scripts' / name)],
-                    env=self.env, capture_output=True, timeout=10)
+                result = subprocess.run(
+                    [
+                        'bash',
+                        '-c',
+                        'command() { if [[ "$1" == -v && "$2" == cmp ]]; then return 1; '
+                        'else builtin command "$@"; fi; }; source "$1"',
+                        'test',
+                        str(ROOT / 'scripts' / name),
+                    ],
+                    env=self.env,
+                    capture_output=True,
+                    timeout=10,
+                )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b'Missing required command: cmp', result.stderr)
                 self.assertFalse(self.player.exists())
+
+    def test_install_rejects_unsupported_tools_before_copying_files(self):
+        self.executable('mpv', '#!/bin/sh\necho "mpv 0.40.0"\n')
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'mpv 0.41', result.stderr)
+        self.assertFalse(self.player.exists())
+        self.assertFalse((self.data / 'frameferry/bin').exists())
 
     def test_isolated_install_and_repeat_do_not_touch_normal_mpv(self):
         normal = self.config / 'mpv/mpv.conf'
         normal.parent.mkdir(parents=True)
         normal.write_text('private settings')
-        for _ in range(2): self.assertEqual(self.install().returncode, 0)
+        for _ in range(2):
+            self.assertEqual(self.install().returncode, 0)
         self.assertEqual(normal.read_text(), 'private settings')
         self.assertEqual((self.player / 'mpv.conf').read_bytes(), (ROOT / 'config/mpv/mpv.conf').read_bytes())
         manifest = json.loads((self.config / 'net.imput.helium/NativeMessagingHosts/frameferry.json').read_text())
@@ -103,9 +140,14 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
 
     def test_doctor_rejects_empty_components_and_changed_recovery_scripts(self):
         self.prepare()
-        for name in ('scripts/youtube.lua', 'scripts/sponsorblock_chapter_skip.lua',
-                     'scripts/uosc/main.lua', 'scripts/uosc/lib/utils.lua', 'scripts/thumbfast.lua',
-                     'scripts/sponsorblock_shared/sponsorblock.py'):
+        for name in (
+            'scripts/youtube.lua',
+            'scripts/sponsorblock_chapter_skip.lua',
+            'scripts/uosc/main.lua',
+            'scripts/uosc/lib/utils.lua',
+            'scripts/thumbfast.lua',
+            'scripts/sponsorblock_shared/sponsorblock.py',
+        ):
             with self.subTest(file=name):
                 target = self.player / name
                 content = target.read_bytes()
@@ -120,8 +162,12 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         for key in ('MPV_CONFIG_DIR', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'):
             for script in ('install-mpv-ui.sh', 'install-mpv-sponsorblock.sh', 'install-mpv-token-provider.sh'):
                 with self.subTest(variable=key, script=script):
-                    result = subprocess.run(['bash', str(ROOT / 'scripts' / script)],
-                                            env={**self.env, key: 'relative'}, capture_output=True, timeout=5)
+                    result = subprocess.run(
+                        ['bash', str(ROOT / 'scripts' / script)],
+                        env={**self.env, key: 'relative'},
+                        capture_output=True,
+                        timeout=5,
+                    )
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(b'must be an absolute path', result.stderr)
         self.assertFalse(self.player.exists())
@@ -213,7 +259,11 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         self.assertEqual(self.doctor().returncode, 0, self.doctor().stdout)
 
     def test_browser_targets_and_custom_userdata(self):
-        for browser, folder in (('chromium', 'chromium'), ('chrome', 'google-chrome'), ('brave', 'BraveSoftware/Brave-Browser')):
+        for browser, folder in (
+            ('chromium', 'chromium'),
+            ('chrome', 'google-chrome'),
+            ('brave', 'BraveSoftware/Brave-Browser'),
+        ):
             self.assertEqual(self.install('install.sh', '--browser', browser).returncode, 0)
             self.assertTrue((self.config / folder / 'NativeMessagingHosts/frameferry.json').is_file())
         custom = self.home / 'browser data'
@@ -255,11 +305,21 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         (target / 'server/build').mkdir(parents=True)
         (target / 'server/node_modules').mkdir()
         (target / 'server/build/generate_once.js').touch()
-        self.executable('git', '#!/bin/sh\n[ "$3" = rev-parse ] || exit 1\necho 37169ee2656e08c5c2e5dc9df4c598c0cb4c88a8\n')
+        self.executable(
+            'git', '#!/bin/sh\n[ "$3" = rev-parse ] || exit 1\necho 37169ee2656e08c5c2e5dc9df4c598c0cb4c88a8\n'
+        )
         self.executable('npm', '#!/bin/sh\nexit 1\n')
-        result = subprocess.run(['bash', '-c',
-            'command() { if [[ "$1" == -v && "$2" == deno ]]; then return 1; '
-            'else builtin command "$@"; fi; }; source "$1"',
-            'test', str(ROOT / 'scripts/install-mpv-token-provider.sh')],
-            env=self.env, capture_output=True, timeout=10)
+        result = subprocess.run(
+            [
+                'bash',
+                '-c',
+                'command() { if [[ "$1" == -v && "$2" == deno ]]; then return 1; '
+                'else builtin command "$@"; fi; }; source "$1"',
+                'test',
+                str(ROOT / 'scripts/install-mpv-token-provider.sh'),
+            ],
+            env=self.env,
+            capture_output=True,
+            timeout=10,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)

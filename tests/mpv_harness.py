@@ -1,10 +1,8 @@
 """Real mpv and wrapper with fake yt-dlp and loopback media. No browser or cookies."""
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 import os
-from pathlib import Path
 import shutil
 import socket
 import subprocess
@@ -13,14 +11,18 @@ import tempfile
 import threading
 import time
 import wave
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
-from helpers import ROOT, wait_for
+from .helpers import ROOT, wait_for
 
 URL = 'https://youtu.be/offline'
 
 
 class Player:
-    def __init__(self, routes=None, duplicates=False, options=(), provider=True, url=URL, media_seconds=60, video_seconds=0):
+    def __init__(
+        self, routes=None, duplicates=False, options=(), provider=True, url=URL, media_seconds=60, video_seconds=0
+    ):
         self.temp = tempfile.TemporaryDirectory(prefix='mpv-test-')
         self.root = Path(self.temp.name)
         self.process = self.socket = self.reader = self.server = self.thread = None
@@ -36,10 +38,29 @@ class Player:
             video_media = b''
             if video_seconds:
                 video = self.root / 'video.mp4'
-                subprocess.run([shutil.which('ffmpeg'), '-v', 'error', '-f', 'lavfi', '-i',
-                                'testsrc2=size=160x90:rate=10', '-t', str(video_seconds),
-                                '-c:v', 'mpeg4', '-q:v', '3', '-movflags', '+faststart', str(video)],
-                               check=True, capture_output=True, timeout=20)
+                subprocess.run(
+                    [
+                        shutil.which('ffmpeg'),
+                        '-v',
+                        'error',
+                        '-f',
+                        'lavfi',
+                        '-i',
+                        'testsrc2=size=160x90:rate=10',
+                        '-t',
+                        str(video_seconds),
+                        '-c:v',
+                        'mpeg4',
+                        '-q:v',
+                        '3',
+                        '-movflags',
+                        '+faststart',
+                        str(video),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=20,
+                )
                 video_media = video.read_bytes()
             self.requests = requests = []
 
@@ -57,8 +78,9 @@ class Player:
 
                 def do_GET(self):
                     try:
-                        if self.path == '/denied' or (self.path == '/header'
-                                and self.headers.get('Referer') != 'https://example.test/retained'):
+                        if self.path == '/denied' or (
+                            self.path == '/header' and self.headers.get('Referer') != 'https://example.test/retained'
+                        ):
                             self.send_response(403)
                             self.send_header('Content-Length', '0')
                             self.end_headers()
@@ -70,7 +92,7 @@ class Player:
                             while True:
                                 self.wfile.write(b'0123456789')
                                 self.wfile.flush()
-                                time.sleep(.1)
+                                time.sleep(0.1)
                         media = video_media if self.path.endswith('video.mp4') else audio_media
                         requested = self.headers.get('Range', 'bytes=0-')
                         requests.append((requested, self.client_address[1]))
@@ -85,7 +107,9 @@ class Player:
                             self.end_headers()
                             return
                         self.send_response(206)
-                        self.send_header('Content-Type', 'video/mp4' if self.path.endswith('video.mp4') else 'audio/wav')
+                        self.send_header(
+                            'Content-Type', 'video/mp4' if self.path.endswith('video.mp4') else 'audio/wav'
+                        )
                         self.send_header('Content-Length', str(end - start + 1))
                         self.send_header('Accept-Ranges', 'bytes')
                         self.send_header('Content-Range', f'bytes {start}-{end}/{len(media)}')
@@ -93,20 +117,24 @@ class Player:
                         if self.path == '/buffer' and 1024 * 1024 <= start < len(media) - 65536:
                             buffer_release.wait()
                         if broken:
-                            self.wfile.write(media[start:min(end + 1, cutoff)])
+                            self.wfile.write(media[start : min(end + 1, cutoff)])
                             self.close_connection = True
                         else:
-                            self.wfile.write(media[start:end+1])
+                            self.wfile.write(media[start : end + 1])
                     except (BrokenPipeError, ConnectionResetError):
                         pass
 
             self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-            self.thread = threading.Thread(target=self.server.serve_forever, kwargs={'poll_interval': .05}, daemon=True)
+            self.thread = threading.Thread(
+                target=self.server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True
+            )
             self.thread.start()
             self.routes = self.root / 'routes.json'
             self.routes.write_text(json.dumps(routes or {}))
             self.extractor = self.root / 'yt-dlp'
-            self.extractor.write_text(f'#!{sys.executable}\n' + f'''import json, sys
+            self.extractor.write_text(
+                f'#!{sys.executable}\n'
+                + f"""import json, sys
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 root = Path({str(self.root)!r})
@@ -138,7 +166,8 @@ if info.pop('split', False):
         {{'url': info['url'], 'protocol': 'http', 'ext': 'mp4', 'vcodec': 'mpeg4', 'acodec': 'none'}},
         {{'url': base + 'audio.wav', 'protocol': 'http', 'ext': 'wav', 'vcodec': 'none', 'acodec': 'pcm_s16le'}}]
 print(json.dumps(info))
-''')
+"""
+            )
             self.extractor.chmod(0o755)
             (self.root / 'deno').symlink_to(sys.executable)
             state = self.root / '.local/state/frameferry'
@@ -149,7 +178,7 @@ print(json.dumps(info))
                 build.mkdir(parents=True)
                 (build / 'generate_once.js').touch()
             guard = self.root / 'network-guard.lua'
-            guard.write_text('''mp.add_hook('on_load', 30, function()
+            guard.write_text("""mp.add_hook('on_load', 30, function()
     mp.set_property_bool('user-data/test/ready', false)
     local path = mp.get_property('stream-open-filename', '')
     if not path:find('http://127.0.0.1:', 1, true) and not path:match('^av://lavfi:') then
@@ -162,30 +191,52 @@ end)
 mp.observe_property('user-data/youtube-quality/active', 'native', function()
     mp.set_property_bool('user-data/test/active-bool', mp.get_property_bool('user-data/youtube-quality/active', false))
 end)
-''')
+""")
             browser = self.root / 'xdg-open'
-            browser.write_text(f'#!{sys.executable}\nfrom pathlib import Path\nimport sys\n'
-                               f'Path({str(self.root / "browser-url")!r}).write_text(sys.argv[1])\n')
+            browser.write_text(
+                f'#!{sys.executable}\nfrom pathlib import Path\nimport sys\n'
+                f'Path({str(self.root / "browser-url")!r}).write_text(sys.argv[1])\n'
+            )
             browser.chmod(0o755)
             self.log = self.root / 'mpv.log'
             self.output = self.log.open('wb')
             ipc = self.root / 'ipc'
-            command = [shutil.which('mpv'), '--no-config', '--vo=null', '--ao=null', '--load-scripts=no',
-                       '--idle=yes', '--keep-open=yes', '--terminal=yes', '--input-terminal=no',
-                       '--term-status-msg=', '--term-osd=no', f'--input-ipc-server={ipc}',
-                       f'--script={ROOT}/config/mpv/scripts/youtube.lua', f'--script={guard}',
-                       f'--script-opts=youtube-cookies_browser=chromium:fixture,ytdl_hook-ytdl_path={ROOT}/scripts/yt-dlp-mpv',
-                       '--ytdl-format=bestvideo[height<=?2160]+bestaudio/best[height<=?2160]',
-                       *options, '--', url]
+            command = [
+                shutil.which('mpv'),
+                '--no-config',
+                '--vo=null',
+                '--ao=null',
+                '--load-scripts=no',
+                '--idle=yes',
+                '--keep-open=yes',
+                '--terminal=yes',
+                '--input-terminal=no',
+                '--term-status-msg=',
+                '--term-osd=no',
+                f'--input-ipc-server={ipc}',
+                f'--script={ROOT}/config/mpv/scripts/youtube.lua',
+                f'--script={guard}',
+                f'--script-opts=youtube-cookies_browser=chromium:fixture,ytdl_hook-ytdl_path={ROOT}/scripts/yt-dlp-mpv',
+                '--ytdl-format=bestvideo[height<=?2160]+bestaudio/best[height<=?2160]',
+                *options,
+                '--',
+                url,
+            ]
             if duplicates:
                 command.append(url)
-            env = {**os.environ, 'HOME': str(self.root), 'TMPDIR': str(self.root),
-                   'XDG_STATE_HOME': str(self.root / '.local/state'), 'XDG_DATA_HOME': str(self.root / '.local/share'),
-                   'XDG_CONFIG_HOME': str(self.root / '.config'),
-                   'PATH': str(self.root) + os.pathsep + os.environ['PATH']}
+            env = {
+                **os.environ,
+                'HOME': str(self.root),
+                'TMPDIR': str(self.root),
+                'XDG_STATE_HOME': str(self.root / '.local/state'),
+                'XDG_DATA_HOME': str(self.root / '.local/share'),
+                'XDG_CONFIG_HOME': str(self.root / '.config'),
+                'PATH': str(self.root) + os.pathsep + os.environ['PATH'],
+            }
             self.started = time.monotonic()
-            self.process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
-                                            stdout=self.output, stderr=subprocess.STDOUT)
+            self.process = subprocess.Popen(
+                command, env=env, stdin=subprocess.DEVNULL, stdout=self.output, stderr=subprocess.STDOUT
+            )
             self.wait(lambda: ipc.exists() or self.process.poll() is not None)
             if self.process.poll() is not None:
                 raise RuntimeError(self.log.read_text(errors='replace'))
@@ -219,9 +270,14 @@ end)
             raise AssertionError(self.log.read_text(errors='replace')) from error
 
     def wait_loaded(self, route):
-        self.wait(lambda: self.get('user-data/youtube-quality/route') == route
-                 and self.get('user-data/youtube-quality/loading') is False
-                 and self.get('duration') is not None and self.get('user-data/test/ready'))
+        self.wait(
+            lambda: (
+                self.get('user-data/youtube-quality/route') == route
+                and self.get('user-data/youtube-quality/loading') is False
+                and self.get('duration') is not None
+                and self.get('user-data/test/ready')
+            )
+        )
 
     def close(self):
         self.buffer_release.set()

@@ -6,12 +6,12 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import sys
 import time
+from pathlib import Path
 
-from frameferry_config import DEFAULTS, config_path, executable, load_config
+from frameferry_config import DEFAULTS, config_path, load_config, supported_executable
 from frameferry_install import BROWSERS, atomic_write, digest, extension_id
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--browser', choices=BROWSERS, default='helium')
-    parser.add_argument('--browser-data-dir', type=Path, help='Custom Chromium user-data root, not a profile subdirectory')
+    parser.add_argument(
+        '--browser-data-dir', type=Path, help='Custom Chromium user-data root, not a profile subdirectory'
+    )
     parser.add_argument('--uninstall', action='store_true', help='Remove unchanged managed files and restore originals')
     args = parser.parse_args()
     home = Path.home()
@@ -47,16 +49,19 @@ def main():
                 kept[name] = record
                 print(f'Kept changed file: {path}')
         atomic_write(ledger, (json.dumps(kept, indent=2) + '\n').encode(), 0o600)
-        print('Remove Frame Ferry from the browser Extensions page. Component downloads and private logs remain; see README.')
+        print(
+            'Remove Frame Ferry from the browser Extensions page. Component downloads and private logs remain; see README.'
+        )
         return 0
     if sys.version_info < (3, 10) or sys.platform != 'linux':
         parser.error('Native Linux with Python 3.10+ is required.')
     try:
         settings = load_config()
         for tool in ('mpv', 'yt_dlp', 'deno'):
-            executable(settings, tool)
+            supported_executable(settings, tool)
     except (OSError, ValueError) as error:
         parser.error(str(error))
+
     def install_bytes(content, target, mode=0o644):
         name = str(target)
         previous = records.get(name)
@@ -77,6 +82,7 @@ def main():
         atomic_write(target, content, mode)
         records[name] = {'hash': desired, 'backup': backup}
         atomic_write(ledger, (json.dumps(records, indent=2) + '\n').encode(), 0o600)
+
     if not config_path().exists():
         install_bytes((json.dumps(DEFAULTS, indent=2) + '\n').encode(), config_path(), 0o600)
     install_bytes((ROOT / 'scripts/frameferry_config.py').read_bytes(), data / 'bin/frameferry_config.py')
@@ -85,8 +91,7 @@ def main():
     for source in (ROOT / 'config/mpv').rglob('*'):
         if source.is_file():
             install_bytes(source.read_bytes(), player / source.relative_to(ROOT / 'config/mpv'))
-    install_bytes(('ytdl_path=' + str(data / 'bin/yt-dlp-mpv') + '\n').encode(),
-                  player / 'script-opts/ytdl_hook.conf')
+    install_bytes(('ytdl_path=' + str(data / 'bin/yt-dlp-mpv') + '\n').encode(), player / 'script-opts/ytdl_hook.conf')
     for name in ('frameferry-native', 'yt-dlp-mpv', 'yt-dlp-update-background'):
         install_bytes((ROOT / 'scripts' / name).read_bytes(), data / 'bin' / name, 0o755)
     for source in (ROOT / 'extension').rglob('*'):
@@ -95,9 +100,13 @@ def main():
     for name in ('LICENSE', 'THIRD_PARTY.md', 'LICENSES/MPL-2.0.txt'):
         install_bytes((ROOT / name).read_bytes(), data / name)
     browser = args.browser_data_dir or config / BROWSERS[args.browser]
-    manifest = {'name': 'frameferry', 'description': 'Frame Ferry playback handoff', 'type': 'stdio',
-                'path': str(data / 'bin/frameferry-native'),
-                'allowed_origins': ['chrome-extension://' + extension_id(ROOT / 'extension/manifest.json') + '/']}
+    manifest = {
+        'name': 'frameferry',
+        'description': 'Frame Ferry playback handoff',
+        'type': 'stdio',
+        'path': str(data / 'bin/frameferry-native'),
+        'allowed_origins': ['chrome-extension://' + extension_id(ROOT / 'extension/manifest.json') + '/'],
+    }
     install_bytes((json.dumps(manifest, indent=2) + '\n').encode(), browser / 'NativeMessagingHosts/frameferry.json')
     print(f'Player configuration: {player}')
     print(f'Load unpacked in your browser: {data / "extension"}')

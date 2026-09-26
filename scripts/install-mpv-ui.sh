@@ -9,10 +9,10 @@ trap 'rm -rf -- "$work"' EXIT
 
 uosc_version=5.13.0
 thumbfast_commit=0f711de3138c9bd6718209d819ac54022c23ded2
-curl -fLSs --max-time 60 -o "$work/uosc.zip" \
-  "https://github.com/tomasklaen/uosc/releases/download/$uosc_version/uosc.zip"
-curl -fLSs --max-time 30 -o "$work/thumbfast.lua" \
-  "https://raw.githubusercontent.com/po5/thumbfast/$thumbfast_commit/thumbfast.lua"
+download \
+  "https://github.com/tomasklaen/uosc/releases/download/$uosc_version/uosc.zip" "$work/uosc.zip"
+download \
+  "https://raw.githubusercontent.com/po5/thumbfast/$thumbfast_commit/thumbfast.lua" "$work/thumbfast.lua"
 
 python3 - "$work" <<'PY'
 import hashlib

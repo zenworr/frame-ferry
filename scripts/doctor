@@ -5,12 +5,10 @@
 import argparse
 import json
 import os
-from pathlib import Path
-import re
-import subprocess
 import sys
+from pathlib import Path
 
-from frameferry_config import executable, load_config
+from frameferry_config import MINIMUM_VERSIONS, load_config, supported_executable
 from frameferry_install import BROWSERS, extension_id
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,10 +23,12 @@ def main():
     config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
     data = Path(os.environ.get('XDG_DATA_HOME', home / '.local/share')) / 'frameferry'
     good = True
+
     def check(label, result):
         nonlocal good
         good = good and bool(result)
         print(('OK: ' if result else 'FAIL: ') + label)
+
     check('Native Linux and Python 3.10+', sys.platform == 'linux' and sys.version_info >= (3, 10))
     try:
         settings = load_config()
@@ -36,18 +36,20 @@ def main():
         check(str(error), False)
         return 1
     check('Frame Ferry configuration', True)
-    for tool, minimum in (('mpv', (0, 41)), ('deno', (2, 0)), ('yt_dlp', (2026, 8))):
+    for tool in MINIMUM_VERSIONS:
         try:
-            path = executable(settings, tool)
-            command = [path, '--version'] if tool != 'yt_dlp' else [path, '--ignore-config', '--version']
-            result = subprocess.run(command, capture_output=True, text=True, timeout=5)
-            match = re.search(r'(\d+)\.(\d+)', result.stdout)
-            check(tool + ' supported version', result.returncode == 0 and match and tuple(map(int, match.groups())) >= minimum)
-        except (OSError, subprocess.TimeoutExpired): check(tool + ' executable', False)
+            supported_executable(settings, tool)
+            check(tool + ' supported version', True)
+        except (OSError, ValueError) as error:
+            check(str(error), False)
     for name in ('frameferry-native', 'yt-dlp-mpv', 'yt-dlp-update-background'):
         target = data / 'bin' / name
-        check(str(target), target.is_file() and os.access(target, os.X_OK)
-              and target.read_bytes() == (ROOT / 'scripts' / name).read_bytes())
+        check(
+            str(target),
+            target.is_file()
+            and os.access(target, os.X_OK)
+            and target.read_bytes() == (ROOT / 'scripts' / name).read_bytes(),
+        )
     shared = data / 'bin/frameferry_config.py'
     check(str(shared), shared.is_file() and shared.read_bytes() == (ROOT / 'scripts/frameferry_config.py').read_bytes())
     for source in sorted((ROOT / 'extension').rglob('*')):
@@ -60,9 +62,14 @@ def main():
         check(str(target), target.is_file() and target.read_bytes() == source.read_bytes())
     for name in ('mpv.conf', 'input.conf', 'script-opts/youtube.conf'):
         check(str(player / name), (player / name).is_file())
-    for name in ('scripts/uosc/main.lua', 'scripts/uosc/lib/utils.lua', 'scripts/thumbfast.lua',
-                 'scripts/sponsorblock.lua', 'scripts/sponsorblock_shared/main.lua',
-                 'scripts/sponsorblock_shared/sponsorblock.py'):
+    for name in (
+        'scripts/uosc/main.lua',
+        'scripts/uosc/lib/utils.lua',
+        'scripts/thumbfast.lua',
+        'scripts/sponsorblock.lua',
+        'scripts/sponsorblock_shared/main.lua',
+        'scripts/sponsorblock_shared/sponsorblock.py',
+    ):
         target = player / name
         check(str(target), target.is_file() and target.stat().st_size > 0)
     expected_hook = 'ytdl_path=' + str(data / 'bin/yt-dlp-mpv')
@@ -75,7 +82,8 @@ def main():
         valid = isinstance(manifest, dict) and manifest.get('name') == 'frameferry' and manifest.get('type') == 'stdio'
         valid = valid and manifest.get('path') == str(data / 'bin/frameferry-native')
         valid = valid and manifest.get('allowed_origins') == ['chrome-extension://' + identity + '/']
-    except (OSError, ValueError): valid = False
+    except (OSError, ValueError):
+        valid = False
     check('Native-host manifest and allowed extension ID', valid)
     print('Local checks only. Extension activation, provider access, and GPU output require manual testing.')
     return 0 if good else 1

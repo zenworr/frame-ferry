@@ -5,25 +5,37 @@
 import json
 import math
 import os
-from pathlib import Path
 import socket
 import struct
 import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from frameferry_config import executable, load_config, proxy_environment
-
+from frameferry_config import MIN_PRINTABLE_CODEPOINT, executable, load_config, proxy_environment, supported_executable
 
 CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'frameferry/mpv'
 STATE = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'frameferry'
 HEIGHTS = {0, 480, 720, 1080, 1440, 2160}
+PROTOCOL_VERSION = 1
+MAX_URL_LENGTH = 8192
+MAX_POSITION_SECONDS = 365 * 24 * 60 * 60
+MAX_MESSAGE_BYTES = 64 * 1024
+MESSAGE_HEADER = struct.Struct('=I')
+IPC_CONNECT_TIMEOUT = 1
+IPC_CONNECT_INTERVAL = 0.05
+IPC_POLL_INTERVAL = 0.1
+PROCESS_STOP_TIMEOUT = 3
 
 
 def validate(message):
-    if not isinstance(message, dict) or type(message.get('version')) is not int or message['version'] != 1:
+    if (
+        not isinstance(message, dict)
+        or type(message.get('version')) is not int
+        or message['version'] != PROTOCOL_VERSION
+    ):
         raise ValueError('Unsupported request. Update the extension and native host together.')
     allowed = {'version', 'action'}
     if message.get('action') != 'check':
@@ -35,15 +47,19 @@ def validate(message):
     if message.get('action') != 'play':
         raise ValueError('Unknown action.')
     url = message.get('url')
-    if not isinstance(url, str) or len(url) > 8192 or any(ord(c) < 32 for c in url):
+    if not isinstance(url, str) or len(url) > MAX_URL_LENGTH or any(ord(c) < MIN_PRINTABLE_CODEPOINT for c in url):
         raise ValueError('The page URL is not valid.')
     parsed = urlsplit(url)
     if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError('Only HTTP and HTTPS links without embedded credentials are supported.')
     _ = parsed.port
     position = message.get('position')
-    if position is not None and (type(position) not in (int, float) or not math.isfinite(position)
-                                 or position < 0 or position > 31536000):
+    if position is not None and (
+        type(position) not in (int, float)
+        or not math.isfinite(position)
+        or position < 0
+        or position > MAX_POSITION_SECONDS
+    ):
         raise ValueError('Playback position must be a finite, non-negative number of seconds.')
     if type(message.get('quality')) is not int or message['quality'] not in HEIGHTS:
         raise ValueError('Unsupported maximum resolution.')
@@ -55,12 +71,24 @@ def validate(message):
 def command_for(message, ipc, config=None):
     config = load_config() if config is None else config
     mpv = executable(config, 'mpv')
-    command = [mpv, f'--config-dir={CONFIG}', f'--input-ipc-server={ipc}',
-               '--idle=no', '--terminal=yes', '--input-terminal=no', '--term-osd=no',
-               '--term-status-msg=', '--msg-color=no', '--msg-level=all=info',
-               '--fullscreen=' + ('yes' if message['fullscreen'] else 'no'),
-               f'--script-opts-append=youtube-recovery_timeout={config["recovery_timeout"]}',
-               f'--script-opts-append=thumbfast-mpv_path={mpv}']
+    command = [
+        mpv,
+        f'--config-dir={CONFIG}',
+        f'--input-ipc-server={ipc}',
+        '--idle=no',
+        '--terminal=yes',
+        '--input-terminal=no',
+        '--term-osd=no',
+        '--term-status-msg=',
+        '--msg-color=no',
+        '--msg-level=all=info',
+        '--fullscreen=' + ('yes' if message['fullscreen'] else 'no'),
+        *[
+            f'--script-opts-append=youtube-{name}={config[name]}'
+            for name in ('recovery_timeout', 'stall_timeout', 'http_chunk_size')
+        ],
+        f'--script-opts-append=thumbfast-mpv_path={mpv}',
+    ]
     height = message['quality']
     if height:
         command.append(f'--ytdl-format=bestvideo[height<=?{height}]+bestaudio/best[height<=?{height}]')
@@ -68,9 +96,14 @@ def command_for(message, ipc, config=None):
     if position is not None:
         parts = urlsplit(url)
         host = parts.hostname.lower().rstrip('.')
-        if host in ('youtu.be', 'youtube.com', 'youtube-nocookie.com') or host.endswith(('.youtube.com', '.youtube-nocookie.com')):
-            query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
-                     if k not in ('t', 'start', 'time_continue')]
+        if host in ('youtu.be', 'youtube.com', 'youtube-nocookie.com') or host.endswith(
+            ('.youtube.com', '.youtube-nocookie.com')
+        ):
+            query = [
+                (k, v)
+                for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                if k not in ('t', 'start', 'time_continue')
+            ]
             query.append(('t', str(int(position))))
             url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ''))
         # Entry-local options must not affect a later video opened in this player.
@@ -82,7 +115,7 @@ def command_for(message, ipc, config=None):
 
 def wait_for_playback(process, path, deadline):
     with socket.socket(socket.AF_UNIX) as ipc:
-        ipc.settimeout(1)
+        ipc.settimeout(IPC_CONNECT_TIMEOUT)
         while True:
             if process.poll() is not None:
                 raise RuntimeError('mpv exited before playback started. Check the player log.')
@@ -92,13 +125,14 @@ def wait_for_playback(process, path, deadline):
                 ipc.connect(str(path))
                 break
             except (FileNotFoundError, ConnectionRefusedError):
-                time.sleep(.05)
+                time.sleep(IPC_CONNECT_INTERVAL)
         with ipc.makefile('rb') as reader:
             serial = 0
+
             def property_value(name):
                 nonlocal serial
                 serial += 1
-                ipc.settimeout(max(.1, deadline - time.monotonic()))
+                ipc.settimeout(max(IPC_POLL_INTERVAL, deadline - time.monotonic()))
                 ipc.sendall((json.dumps({'command': ['get_property', name], 'request_id': serial}) + '\n').encode())
                 while True:
                     if time.monotonic() >= deadline:
@@ -109,14 +143,21 @@ def wait_for_playback(process, path, deadline):
                     event = json.loads(line)
                     if event.get('request_id') == serial:
                         return event.get('data')
+
             while time.monotonic() < deadline:
                 if property_value('user-data/youtube-quality/slate'):
                     reason = property_value('user-data/youtube-quality/error')
-                    raise RuntimeError(reason or 'No playable stream was found. Try another quality or continue in the browser.')
+                    raise RuntimeError(
+                        reason or 'No playable stream was found. Try another quality or continue in the browser.'
+                    )
                 position = property_value('time-pos')
-                if position is not None and not property_value('user-data/youtube-quality/loading') and not property_value('seeking'):
+                if (
+                    position is not None
+                    and not property_value('user-data/youtube-quality/loading')
+                    and not property_value('seeking')
+                ):
                     return
-                time.sleep(.1)
+                time.sleep(IPC_POLL_INTERVAL)
     raise TimeoutError('mpv did not become ready in time.')
 
 
@@ -127,26 +168,33 @@ def handle(message):
         raise FileNotFoundError('Frame Ferry is not set up. Run scripts/setup-frameferry.')
     if message['action'] == 'check':
         for tool in ('mpv', 'yt_dlp', 'deno'):
-            executable(config, tool)
+            supported_executable(config, tool)
         return {'ok': True, 'message': 'Native host and player configuration found. Playback has not been tested.'}
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     STATE.chmod(0o700)
-    for old in sorted(STATE.glob('player-*.log'), key=lambda p: p.stat().st_mtime, reverse=True)[19:]:
+    for old in sorted(STATE.glob('player-*.log'), key=lambda p: p.stat().st_mtime, reverse=True)[
+        config['log_retention'] - 1 :
+    ]:
         old.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix='frameferry-', dir='/tmp') as temp:
         ipc = Path(temp) / 'ipc'
         command = command_for(message, ipc, config)
         with tempfile.NamedTemporaryFile(prefix='player-', suffix='.log', dir=STATE, delete=False) as output:
-            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
-                                       stderr=subprocess.STDOUT, start_new_session=True,
-                                       env=proxy_environment(config))
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                env=proxy_environment(config),
+            )
         try:
             wait_for_playback(process, ipc, time.monotonic() + config['startup_timeout'])
         except Exception as error:
             if process.poll() is None:
                 process.terminate()
                 try:
-                    process.wait(timeout=3)
+                    process.wait(timeout=PROCESS_STOP_TIMEOUT)
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
@@ -163,15 +211,16 @@ def serve(incoming, outgoing):
                 raise ValueError('Incomplete native message.')
             result.extend(part)
         return result
+
     try:
-        size, = struct.unpack('=I', read_exact(4))
-        if not 0 < size <= 65536:
+        (size,) = MESSAGE_HEADER.unpack(read_exact(MESSAGE_HEADER.size))
+        if not 0 < size <= MAX_MESSAGE_BYTES:
             raise ValueError('Native message is too large or empty.')
         result = handle(json.loads(read_exact(size)))
     except (ValueError, OSError, RuntimeError) as error:
         result = {'ok': False, 'message': str(error)}
     body = json.dumps(result, ensure_ascii=True).encode()
-    outgoing.write(struct.pack('=I', len(body)) + body)
+    outgoing.write(MESSAGE_HEADER.pack(len(body)) + body)
     outgoing.flush()
 
 
