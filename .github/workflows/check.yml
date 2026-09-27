@@ -12,7 +12,7 @@ jobs:
         python: ['3.10', '3.14']
     steps:
       - name: Install test tools
-        run: pacman -Syu --noconfirm git make python uv lua luacheck mpv ffmpeg patch nodejs npm diffutils
+        run: pacman -Syu --noconfirm git make python uv lua luacheck mpv ffmpeg openssl patch nodejs npm diffutils
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -22,6 +22,7 @@ jobs:
           echo "PYTHON=$(uv python find '${{ matrix.python }}')" >> "$GITHUB_ENV"
       - run: make dev-setup
       - run: make check
+      - run: make test-player
       - if: matrix.python == '3.14'
         run: make test-slow
       - run: make audit

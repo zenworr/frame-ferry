@@ -26,24 +26,28 @@ YouTube recovery state is separate for each player. Retained metadata uses an un
 
 ## Setup
 
-Install Make, Python 3.10+, Node.js 22.13+ or 24+, npm, Lua/luac 5.4+, Luacheck 1.2+, mpv 0.41+, FFmpeg, Bash, curl, patch, and diffutils. For Arch Linux:
+Headless checks need Make, Python 3.10+, Node.js 22.13+ or 24+, npm, Lua/luac 5.4+, Luacheck 1.2+, Bash, curl, patch, and diffutils. For Arch Linux:
 
 ```sh
-sudo pacman -S --needed make python nodejs npm lua luacheck mpv ffmpeg bash curl patch diffutils
+sudo pacman -S --needed make python nodejs npm lua luacheck bash curl patch diffutils
 make dev-setup
 ```
+
+Real player checks also need mpv 0.41+, FFmpeg, and OpenSSL. Install them on a test machine with the required versions; do not install mpv in a headless development guest just to run `make check`.
 
 `make dev-setup` installs pinned Python tools in `.venv` and npm tools in `node_modules`. Python hashes and the npm lock file are checked. npm install scripts are disabled. No system Python packages are changed.
 
 ## Required checks
 
 ```sh
-make check
-make test-slow
+make check         # headless checks; no real mpv
+make test-player   # real mpv and native handoff checks
+make test-slow     # real mpv recovery deadline
 make audit
 ```
 
-- `make check` runs Ruff, ESLint, ShellCheck, Luacheck, formatting checks, syntax checks, dependency checks, and offline tests. Missing tools, lint warnings, stale dependency pins, and test failures stop the check.
+- `make check` runs Ruff, ESLint, ShellCheck, Luacheck, formatting checks, syntax checks, dependency checks, and offline tests. Real mpv tests are marked as skipped. Missing headless tools, lint warnings, stale dependency pins, and test failures stop the check.
+- `make test-player` requires mpv 0.41+ and FFmpeg. It runs the real playback, native handoff, and proxy tests. CI runs both `make check` and `make test-player`.
 - `make test-slow` also tests the full recovery deadline with real mpv.
 - `make audit` contacts Python and npm advisory services for the locked development dependencies. Any reported vulnerability fails the check. Keep this network check separate from offline tests. External player tools and optional components are installed separately; setup and doctor check the required runtime tool versions.
 - `make format` applies the project formatters and safe lint fixes. Review the diff before committing.

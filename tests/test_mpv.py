@@ -11,7 +11,10 @@ from .helpers import ROOT
 from .mpv_harness import URL, Player
 
 
-@unittest.skipUnless(shutil.which('mpv'), 'mpv is required for offline playback tests')
+@unittest.skipUnless(
+    os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv'),
+    'run make test-player for real mpv tests',
+)
 class MpvTests(unittest.TestCase):
     def player(self, *args, **kwargs):
         p = Player(*args, **kwargs)

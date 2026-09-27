@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := check
-.PHONY: check check-tools dev-setup lint format syntax dependency-check audit test test-slow install doctor
+.PHONY: check check-tools check-player-tools dev-setup lint format syntax dependency-check audit test test-player test-slow install doctor
 
 PYTHON ?= python3
 DEV_BIN := .venv/bin
@@ -15,11 +15,17 @@ dev-setup:
 check: lint syntax dependency-check test
 
 check-tools:
-	@for tool in $(PYTHON) node npm lua luac luacheck mpv ffmpeg bash curl patch cmp; do \
+	@for tool in $(PYTHON) node npm lua luac luacheck bash curl patch cmp; do \
 		command -v "$$tool" >/dev/null || { echo "Missing $$tool. See docs/development.md." >&2; exit 1; }; \
 	done
 	@test -x $(DEV_BIN)/ruff -a -x $(DEV_BIN)/shellcheck -a -d node_modules || \
 		{ echo 'Run make dev-setup before make check.' >&2; exit 1; }
+
+check-player-tools:
+	@for tool in $(PYTHON) mpv ffmpeg openssl; do \
+		command -v "$$tool" >/dev/null || { echo "Missing $$tool. See docs/development.md." >&2; exit 1; }; \
+	done
+	@PYTHONPATH=scripts $(PYTHON) -c "from frameferry_config import DEFAULTS, supported_executable; supported_executable(DEFAULTS, 'mpv')"
 
 lint: check-tools
 	$(DEV_BIN)/ruff check $(PYTHON_SOURCES)
@@ -50,11 +56,14 @@ audit:
 	npm run audit
 
 test:
-	$(PYTHON) -m unittest discover -s tests -t . -v
+	FRAME_FERRY_PLAYER_TESTS=0 $(PYTHON) -m unittest discover -s tests -t . -v
 	@for file in tests/test_*.lua; do lua "$$file" || exit; done
 
-test-slow: check-tools
-	MPV_SLOW_TESTS=1 $(PYTHON) -m unittest discover -s tests -t . -p test_mpv.py -v
+test-player: check-player-tools
+	FRAME_FERRY_PLAYER_TESTS=1 $(PYTHON) -m unittest discover -s tests -t . -v
+
+test-slow: check-player-tools
+	FRAME_FERRY_PLAYER_TESTS=1 MPV_SLOW_TESTS=1 $(PYTHON) -m unittest discover -s tests -t . -p test_mpv.py -v
 
 install:
 	./scripts/install.sh

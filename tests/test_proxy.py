@@ -17,7 +17,10 @@ from frameferry_config import DEFAULTS
 from .helpers import load_script
 
 
-@unittest.skipUnless(shutil.which('mpv') and shutil.which('openssl'), 'mpv and OpenSSL are required')
+@unittest.skipUnless(
+    os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv') and shutil.which('openssl'),
+    'run make test-player with mpv and OpenSSL',
+)
 class ProxyTests(unittest.TestCase):
     def test_native_http_and_https_media_use_the_configured_proxy(self):
         native = load_script('frameferry-native')
