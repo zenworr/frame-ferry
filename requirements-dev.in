@@ -1,5 +1,5 @@
 # Development tools only. The runtime uses the Python standard library.
-ruff==0.16.8
+ruff==0.16.9
 pip-audit==2.10.1
 shellcheck-py==0.11.0.1
 # Keep pip-api's bootstrap dependency and Python 3.10 compatibility in regenerated locks.
