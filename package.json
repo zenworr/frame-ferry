@@ -16,6 +16,6 @@
     "eslint": "10.11.0",
     "globals": "17.12.0",
     "prettier": "3.9.9",
-    "@johnnymorganz/stylua-bin": "2.5.2"
+    "@johnnymorganz/stylua-bin": "2.6.0"
   }
 }
