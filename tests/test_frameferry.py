@@ -6,16 +6,20 @@ import socket
 import struct
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
 from frameferry_config import DEFAULTS
 
-from .helpers import ROOT, load_script
+from .helpers import ROOT, load_script, wait_for
 from .mpv_harness import Player
 
 native = load_script('frameferry-native')
+BROWSER_REPLY = {'ok': True, 'outcome': 'browser', 'message': 'Return to the browser was requested in mpv.'}
 
 
 def request(**changes):
@@ -60,7 +64,7 @@ class NativeTests(unittest.TestCase):
         def probe(process, path, deadline):
             self.addCleanup(process.wait, timeout=5)
             self.addCleanup(process.terminate)
-            original(process, path, deadline)
+            outcome = original(process, path, deadline)
             with socket.socket(socket.AF_UNIX) as ipc:
                 ipc.connect(str(path))
                 ipc.sendall(b'{"command":["get_property","time-pos"],"request_id":1}\n')
@@ -70,6 +74,7 @@ class NativeTests(unittest.TestCase):
                         if event.get('request_id') == 1:
                             observed.append(event['data'])
                             break
+            return outcome
 
         with (
             patch.object(native, 'CONFIG', config),
@@ -79,8 +84,101 @@ class NativeTests(unittest.TestCase):
             reply = native.handle(
                 request(url=f'http://127.0.0.1:{player.server.server_port}/audio.wav', position=30.625, quality=0)
             )
-        self.assertTrue(reply['ok'])
+        self.assertEqual(reply['outcome'], 'playing')
         self.assertAlmostEqual(observed[0], 30.625, delta=0.2)
+
+    @unittest.skipUnless(
+        os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv'),
+        'run make test-player for real mpv tests',
+    )
+    def test_browser_return_during_native_startup(self):
+        for action in ('fast', 'slow', 'failed', 'quit'):
+            with self.subTest(action=action):
+                self.check_browser_return_during_startup(action)
+
+    def check_browser_return_during_startup(self, action):
+        player = Player(url=None)
+        self.addCleanup(player.close)
+        config = player.root / 'native-config'
+        config.mkdir()
+        (config / 'mpv.conf').write_text('vo=null\nao=null\nytdl=no\nload-scripts=no\n')
+        guard = config / 'loopback.lua'
+        guard.write_text(f"""mp.add_hook('on_load', 30, function()
+    if not mp.get_property_bool('user-data/youtube-quality/slate') then
+        mp.set_property('stream-open-filename', 'http://127.0.0.1:{player.server.server_port}/stall')
+    end
+end)
+""")
+        opener = player.root / 'xdg-open'
+        started = player.root / 'opener-started'
+        release = player.root / 'opener-release'
+        wait = f'while [ ! -f "{release}" ]; do sleep 0.02; done\n' if action == 'slow' else ''
+        opener.write_text(f'#!/bin/sh\ntouch "{started}"\n{wait}exit {int(action == "failed")}\n')
+        opener.chmod(0o755)
+        waiting = threading.Event()
+        allow_poll = threading.Event()
+        original_wait = native.wait_for_playback
+        original_command = native.command_for
+        ipc = []
+
+        def command(message, path, settings):
+            ipc.append(path)
+            binary, *args = original_command(message, path, settings)
+            return [binary, f'--script={ROOT}/config/mpv/scripts/youtube.lua', f'--script={guard}', *args]
+
+        def wait_to_poll(process, path, deadline):
+            player.process = process
+            waiting.set()
+            if not allow_poll.wait(10):
+                raise AssertionError('The startup test did not release the native host.')
+            return original_wait(process, path, deadline)
+
+        state = player.root / 'native-state'
+        with (
+            patch.object(native, 'CONFIG', config),
+            patch.object(native, 'STATE', state),
+            patch.object(native, 'command_for', side_effect=command),
+            patch.object(native, 'wait_for_playback', side_effect=wait_to_poll),
+            patch.object(
+                native, 'proxy_environment', return_value=os.environ | {'PATH': f'{player.root}:{os.environ["PATH"]}'}
+            ),
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+            reply = pool.submit(native.handle, request())
+            try:
+                self.assertTrue(waiting.wait(5))
+                player.log = next(state.glob('player-*.log'))
+                player.wait(ipc[0].is_socket)
+                player.socket = socket.socket(socket.AF_UNIX)
+                player.socket.settimeout(5)
+                player.socket.connect(str(ipc[0]))
+                player.reader = player.socket.makefile('rb')
+                player.sequence = 0
+                player.wait(lambda: player.get('user-data/youtube-quality/loading'))
+                if action == 'quit':
+                    player.socket.sendall(b'{"command":["quit"]}\n')
+                else:
+                    player.command('script-binding', 'youtube/youtube-browser')
+                    wait_for(started.exists)
+                if action in ('fast', 'quit'):
+                    self.assertEqual(player.process.wait(timeout=5), 0)
+                allow_poll.set()
+                if action == 'quit':
+                    with self.assertRaisesRegex(RuntimeError, 'mpv exited before playback started'):
+                        reply.result(timeout=5)
+                else:
+                    self.assertEqual(reply.result(timeout=5), BROWSER_REPLY)
+                    if action == 'slow':
+                        self.assertIsNone(player.process.poll())
+                        release.touch()
+                        self.assertEqual(player.process.wait(timeout=5), 0)
+                    elif action == 'failed':
+                        player.wait(lambda: player.get('user-data/youtube-quality/slate'))
+                        self.assertIsNone(player.process.poll())
+                        self.assertEqual(player.get('user-data/youtube-quality/route'), 'browser')
+            finally:
+                release.touch()
+                allow_poll.set()
 
     @unittest.skipUnless(
         os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv'),
@@ -90,8 +188,6 @@ class NativeTests(unittest.TestCase):
         player = Player({'*': 'fail'})
         self.addCleanup(player.close)
         player.wait(lambda: player.get('user-data/youtube-quality/slate'))
-        import time
-
         with self.assertRaisesRegex(RuntimeError, 'YouTube requested account access'):
             native.wait_for_playback(player.process, player.root / 'ipc', time.monotonic() + 2)
 
@@ -169,6 +265,86 @@ class NativeTests(unittest.TestCase):
             output = io.BytesIO()
             native.serve(io.BytesIO(data), output)
             self.assertFalse(json.loads(output.getvalue()[4:])['ok'])
+
+    def test_play_responses(self):
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(native, 'CONFIG', Path(temp)),
+            patch.object(native, 'STATE', Path(temp) / 'state'),
+            patch.object(native, 'command_for', return_value=['mpv']),
+            patch.object(native.subprocess, 'Popen') as spawn,
+            patch.object(native, 'wait_for_playback') as wait,
+        ):
+            (Path(temp) / 'mpv.conf').touch()
+            spawn.return_value.pid = 123
+            spawn.return_value.poll.return_value = None
+            payload = json.dumps(request()).encode()
+            frame = struct.pack('=I', len(payload)) + payload
+
+            def play():
+                output = io.BytesIO()
+                native.serve(io.BytesIO(frame), output)
+                return json.loads(output.getvalue()[4:])
+
+            self.assertEqual(play(), {'ok': True, 'outcome': 'playing', 'message': 'mpv is playing.', 'pid': 123})
+
+            def request_browser(_process, path, _deadline):
+                path.with_name(native.BROWSER_REQUEST_FILE).touch()
+                raise RuntimeError('mpv exited before playback started')
+
+            wait.side_effect = request_browser
+            self.assertEqual(play(), BROWSER_REPLY)
+            spawn.return_value.terminate.assert_not_called()
+
+            wait.side_effect = RuntimeError('no stream')
+            failure = play()
+            self.assertEqual(failure.keys(), {'ok', 'message'})
+            self.assertFalse(failure['ok'])
+            self.assertIn('no stream\nPlayer log: ', failure['message'])
+            spawn.return_value.terminate.assert_called_once()
+
+    def test_prune_ignores_vanished_logs_and_applies_retention_to_old_logs(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(native, 'STATE', Path(temp)):
+            newest, oldest, vanished = (Path(temp) / f'player-{name}.log' for name in ('newest', 'oldest', 'vanished'))
+            for log, mtime in ((newest, 2), (oldest, 1)):
+                log.touch()
+                os.utime(log, (mtime, mtime))
+            with patch.object(Path, 'glob', return_value=iter((vanished, oldest, newest))):
+                native.prune_logs(2)
+            self.assertTrue(newest.exists())
+            self.assertFalse(oldest.exists())
+
+    def test_concurrent_startup_failures_keep_both_logs(self):
+        pending = threading.Event()
+        both_pending = threading.Barrier(2)
+
+        def fail_startup(_process, _path, _deadline):
+            pending.set()
+            both_pending.wait(timeout=5)
+            raise RuntimeError('not ready')
+
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.object(native, 'CONFIG', Path(temp)),
+            patch.object(native, 'STATE', Path(temp) / 'state'),
+            patch.object(native, 'load_config', return_value=DEFAULTS | {'log_retention': 1}),
+            patch.object(native, 'command_for', return_value=['mpv']),
+            patch.object(native.subprocess, 'Popen'),
+            patch.object(native, 'wait_for_playback', side_effect=fail_startup),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            (Path(temp) / 'mpv.conf').touch()
+            first = pool.submit(native.handle, request())
+            self.assertTrue(pending.wait(5))
+            second = pool.submit(native.handle, request())
+            logs = set()
+            for call in (first, second):
+                with self.assertRaisesRegex(RuntimeError, 'not ready') as error:
+                    call.result(timeout=5)
+                log = Path(str(error.exception).split('Player log: ')[1])
+                self.assertTrue(log.is_file(), log)
+                logs.add(log)
+            self.assertEqual(len(logs), 2)
 
     def test_failed_playback_stops_new_player_and_preserves_browser(self):
         with (
