@@ -1,3 +1,4 @@
+import gzip
 import json
 import os
 import subprocess
@@ -10,6 +11,7 @@ from unittest.mock import patch
 from frameferry_install import atomic_write
 
 from .helpers import ROOT
+from .ui_fixtures import THUMBFAST_UPSTREAM, patched_thumbfast
 
 
 class InstallTests(unittest.TestCase):
@@ -67,7 +69,6 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         for name in (
             'uosc/main.lua',
             'uosc/lib/utils.lua',
-            'thumbfast.lua',
             'sponsorblock.lua',
             'sponsorblock_shared/main.lua',
             'sponsorblock_shared/sponsorblock.py',
@@ -75,6 +76,7 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
             target = self.player / 'scripts' / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text('component fixture\n')
+        patched_thumbfast(self.player / 'scripts')
 
     def test_component_installers_require_cmp_before_writing_files(self):
         for name in ('install-mpv-ui.sh', 'install-mpv-sponsorblock.sh'):
@@ -157,6 +159,21 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         target = self.player / 'scripts/youtube.lua'
         target.write_text('-- old version\n')
         self.assertEqual(self.doctor().returncode, 1)
+
+    def test_doctor_requires_patched_thumbfast(self):
+        self.prepare()
+        target = self.player / 'scripts/thumbfast.lua'
+        patched = target.read_bytes()
+        for content, expected in (
+            (gzip.decompress(THUMBFAST_UPSTREAM.read_bytes()), 1),
+            (patched, 0),
+            (patched + b'\n-- damaged\n', 1),
+        ):
+            target.write_bytes(content)
+            result = self.doctor()
+            self.assertEqual(result.returncode, expected, result.stdout)
+            if expected:
+                self.assertIn(b'thumbfast.lua does not match; rerun scripts/install-mpv-ui.sh', result.stdout)
 
     def test_component_installers_reject_relative_paths_before_writing(self):
         for key in ('MPV_CONFIG_DIR', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'):

@@ -156,6 +156,28 @@ class MpvTests(unittest.TestCase):
         p.command('keypress', 'MBTN_RIGHT')
         p.wait(lambda: p.get('pause') is False)
 
+    @unittest.skipUnless(os.environ.get('FRAME_FERRY_UI_CONFIG'), 'set FRAME_FERRY_UI_CONFIG to the installed UI')
+    def test_right_click_toggles_pause_with_uosc(self):
+        uosc = Path(os.environ['FRAME_FERRY_UI_CONFIG']) / 'scripts/uosc'
+        p = self.player(
+            {'primary': 'video.mp4'},
+            video_seconds=10,
+            options=(f'--input-conf={ROOT}/config/mpv/input.conf', f'--script={uosc}', '--osc=no'),
+        )
+        p.wait_loaded('primary')
+        menu = 'user-data/uosc/menu/type'
+        p.command('keypress', 'MENU')
+        p.wait(lambda: p.get(menu) == 'menu')
+        p.command('keypress', 'MENU')
+        p.wait(lambda: p.get(menu) is None)
+        size = p.get('osd-dimensions')
+        self.assertEqual(p.command('mouse', size['w'] // 2, size['h'] // 2)['error'], 'success')
+        for paused in (True, False):
+            p.command('keydown', 'MBTN_RIGHT')
+            p.command('keyup', 'MBTN_RIGHT')
+            p.wait(lambda paused=paused: p.get('pause') is paused)
+            self.assertIsNone(p.get(menu))
+
     def test_browser_timestamp_overrides_watch_history(self):
         for timestamp, routes, route in (
             (30, {}, 'primary'),

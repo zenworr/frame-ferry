@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 source "$repo_dir/scripts/lib/install.sh"
-require_commands curl python3 patch cmp
+require_commands curl python3 patch cmp sha256sum
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
@@ -35,6 +35,10 @@ with zipfile.ZipFile(root / "uosc.zip") as archive:
     archive.extractall(root / "uosc")
 PY
 patch --batch --fuzz=0 -s -p1 -d "$work" < "$repo_dir/patches/thumbfast-low-resolution.patch"
+if ! (cd -- "$work" && sha256sum --check --status "$repo_dir/patches/thumbfast-low-resolution.sha256"); then
+  printf 'Checksum mismatch: patched thumbfast.lua\n' >&2
+  exit 1
+fi
 
 config="$mpv_config"
 if python3 - "$work" "$config" <<'PY'
