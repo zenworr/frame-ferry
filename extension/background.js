@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: MIT
-import {settings, normalize, sameVideo, heights} from './settings.js';
-import {captureVideo, pauseVideos, finishPause} from './capture.js';
+import {settings, normalize, sameVideo, heights, isYouTubeNoCookie, youtubeVideoId} from './settings.js';
+import {captureVideo, finishPause} from './capture.js';
 
-const pending = new Set();
+const pending = new Map();
 const host = 'frameferry';
+const statusPrefix = 'status:';
+const rollbackTimeoutMs = 500;
+let statusChanges = Promise.resolve();
+
+function updateStatus(action) {
+  // Keep tab removal ordered after any status write already in progress.
+  const task = statusChanges.then(action);
+  statusChanges = task.catch(() => {});
+  return task;
+}
 
 export async function inspect(tabId) {
   try {
@@ -20,19 +30,39 @@ function publicError(error) {
   }
   return message;
 }
-async function status(tabId, page, text, error = false) {
-  await chrome.storage.session.set({['status:' + tabId]: {page, text, error, pending: pending.has(tabId)}});
+async function writeStatus(tabId, state) {
+  await chrome.storage.session.set({[statusPrefix + tabId]: state});
   try {
-    await chrome.action.setBadgeText({tabId, text: error ? '!' : pending.has(tabId) ? '…' : ''});
-    await chrome.action.setBadgeBackgroundColor({tabId, color: error ? '#b04434' : '#007c83'});
-    await chrome.action.setTitle({tabId, title: 'Frame Ferry — ' + text});
+    await chrome.action.setBadgeText({tabId, text: state.error ? '!' : state.pending ? '…' : ''});
+    await chrome.action.setBadgeBackgroundColor({tabId, color: state.error ? '#b04434' : '#007c83'});
+    await chrome.action.setTitle({tabId, title: 'Frame Ferry — ' + state.text});
   } catch {
     /* The source tab may have been closed during playback startup. */
   }
 }
+function status(tabId, token, state) {
+  return updateStatus(async () => {
+    if (pending.get(tabId) !== token) return;
+    await writeStatus(tabId, {...state, token});
+  });
+}
+const activated = updateStatus(async () => {
+  for (const [key, state] of Object.entries(await chrome.storage.session.get(null))) {
+    if (!key.startsWith(statusPrefix) || !state?.pending) continue;
+    await writeStatus(Number(key.slice(statusPrefix.length)), {
+      ...state,
+      pending: false,
+      interrupted: true,
+      error: true,
+      text: 'Handoff interrupted. Check mpv and the browser before you try again.',
+    });
+  }
+});
 export async function launch(tabId, overrides = {}, link = null) {
+  await activated;
   if (pending.has(tabId)) return {ok: false, message: 'A handoff is already in progress for this tab.'};
-  pending.add(tabId);
+  const token = crypto.randomUUID();
+  pending.set(tabId, token);
   let page = null,
     held = false,
     result;
@@ -44,29 +74,41 @@ export async function launch(tabId, overrides = {}, link = null) {
     let url = link || tab.url;
     if (!/^https?:\/\//i.test(url || ''))
       throw Error('Open an HTTP or HTTPS video page first. Browser settings and local files cannot be sent.');
-    await status(tabId, page, options.pause ? 'Pausing the browser while mpv starts.' : 'Opening mpv.');
-    const captured = await inspect(tabId);
-    const matches = captured && sameVideo(captured.page, url);
-    const position = options.resume ? (matches ? captured.position : null) : 0;
-    let incompletePause = false;
+    await status(tabId, token, {
+      page,
+      text: options.pause ? 'Pausing the browser while mpv starts.' : 'Opening mpv.',
+      pending: true,
+      error: false,
+    });
+    if (pending.get(tabId) !== token) throw Error('The source tab closed during handoff.');
+    let captured,
+      incompletePause = false;
     if (options.pause) {
       held = true;
       const frames = await chrome.scripting.executeScript({
         target: {tabId, allFrames: true},
-        func: pauseVideos,
-        args: [page],
+        func: captureVideo,
+        args: [page, token],
       });
-      if (frames[0]?.result !== true) throw Error('The page changed before it could be paused. Try again.');
-      incompletePause = frames.some((frame) => frame.result !== true);
+      const top = frames[0]?.result;
+      if (!top) throw Error('The page changed before it could be paused. Try again.');
+      captured = top.captured;
+      incompletePause = frames.some((frame) => !frame.result);
       if ((await chrome.tabs.get(tabId)).url !== page) throw Error('The page changed during handoff. Try again.');
-    }
+    } else captured = await inspect(tabId);
+    if (pending.get(tabId) !== token) throw Error('The source tab closed during handoff.');
+    const matches = captured && sameVideo(captured.page, url);
+    const position = options.resume ? (matches ? captured.position : null) : 0;
     // Watch URLs support timestamp playback for Shorts and embedded YouTube videos too.
     const parsed = new URL(url);
-    if (
-      (parsed.hostname === 'youtube.com' || parsed.hostname.endsWith('.youtube.com')) &&
-      /^\/(shorts|embed|live)\//.test(parsed.pathname)
-    ) {
-      parsed.searchParams.set('v', parsed.pathname.split('/')[2]);
+    const id = youtubeVideoId(parsed);
+    if (id && parsed.hostname !== 'youtu.be' && /^\/(shorts|embed|live)\//.test(parsed.pathname)) {
+      if (isYouTubeNoCookie(parsed.hostname)) {
+        parsed.protocol = 'https:';
+        parsed.hostname = 'www.youtube.com';
+        parsed.port = '';
+      }
+      parsed.searchParams.set('v', id);
       parsed.pathname = '/watch';
       url = parsed.href;
     }
@@ -79,35 +121,52 @@ export async function launch(tabId, overrides = {}, link = null) {
       fullscreen: options.fullscreen,
     });
     if (!response?.ok) throw Error(response?.message || 'The native host did not confirm playback.');
+    const message =
+      response.message ||
+      (response.outcome === 'browser' ? 'Return to the browser was requested in mpv.' : 'mpv is playing.');
     result = {
       ok: true,
-      message: 'mpv is playing.' + (incompletePause ? ' Some browser frames could not be paused or verified.' : ''),
+      message: message + (incompletePause ? ' Some browser frames could not be paused or verified.' : ''),
     };
   } catch (error) {
     result = {ok: false, message: publicError(error)};
-  } finally {
-    if (held) {
-      try {
-        const frames = await chrome.scripting.executeScript({
+  }
+  if (held && pending.get(tabId) === token) {
+    let timer;
+    try {
+      const frames = await Promise.race([
+        chrome.scripting.executeScript({
           target: {tabId, allFrames: true},
           func: finishPause,
-          args: [page, !result?.ok],
-        });
-        if (!result?.ok && frames.some((frame) => frame.result === false))
-          result.message += ' Some browser videos could not be resumed; check the tab.';
-      } catch {
-        if (!result?.ok) result.message += ' The browser could not be resumed; check the tab.';
-      }
+          args: [page, token, !result.ok],
+        }),
+        // A background tab can delay play() until the user selects it.
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), rollbackTimeoutMs);
+        }),
+      ]);
+      if (!result.ok && (!frames || frames.some((frame) => frame.result === false)))
+        result.message += ' Browser playback could not be confirmed; check the tab.';
+    } catch {
+      if (!result.ok) result.message += ' Browser playback could not be confirmed; check the tab.';
+    } finally {
+      clearTimeout(timer);
     }
-    pending.delete(tabId);
   }
-  await status(tabId, page, result.message, !result.ok);
+  try {
+    if (page) await status(tabId, token, {page, text: result.message, error: !result.ok, pending: false});
+  } finally {
+    if (pending.get(tabId) === token) pending.delete(tabId);
+  }
   return result;
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) return false;
   const task = async () => {
-    if (message.action === 'inspect') return inspect(message.tabId);
+    if (message.action === 'inspect') {
+      await activated;
+      return inspect(message.tabId);
+    }
     if (message.action === 'check') {
       try {
         return await chrome.runtime.sendNativeMessage(host, {version: 1, action: 'check'});
@@ -143,4 +202,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     launch(tab.id, {}, info.linkUrl || (sameVideo(info.pageUrl, tab.url) ? null : media));
   }
 });
-chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove('status:' + tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  pending.delete(tabId);
+  return updateStatus(() => chrome.storage.session.remove(statusPrefix + tabId));
+});

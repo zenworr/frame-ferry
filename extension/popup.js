@@ -13,6 +13,13 @@ function report(message, error = false) {
   $('status').textContent = message;
   $('status').classList.toggle('error', error);
 }
+function formatPosition(position) {
+  const minutes = Math.floor(position / SECONDS_PER_MINUTE);
+  const hours = Math.floor(minutes / SECONDS_PER_MINUTE);
+  const seconds = String(Math.floor(position % SECONDS_PER_MINUTE)).padStart(CLOCK_DIGITS, '0');
+  const displayMinutes = hours ? String(minutes % SECONDS_PER_MINUTE).padStart(CLOCK_DIGITS, '0') : String(minutes);
+  return `${hours ? hours + ':' : ''}${displayMinutes}:${seconds}`;
+}
 function labels() {
   const resumeLabel = captured ? 'Continue in mpv ↗' : 'Open in mpv ↗';
   $('send').textContent = preferences.resume ? resumeLabel : 'Play from the beginning ↗';
@@ -25,6 +32,7 @@ function showStatus(state) {
   pending = Boolean(state?.pending);
   buttons();
   if (state && sameVideo(state.page, tab.url)) report(state.text, state.error);
+  else if (state?.interrupted) report(state.text, state.error);
   else report(pending ? 'A handoff from this tab is still in progress.' : '');
 }
 async function send(resume) {
@@ -84,7 +92,7 @@ async function init() {
   allowed = /^https?:\/\//i.test(tab?.url || '');
   captured = allowed ? await chrome.runtime.sendMessage({action: 'inspect', tabId: tab.id}) : null;
   $('position').textContent = captured
-    ? `At ${Math.floor(captured.position / SECONDS_PER_MINUTE)}:${String(Math.floor(captured.position % SECONDS_PER_MINUTE)).padStart(CLOCK_DIGITS, '0')} · captured again when you click`
+    ? `At ${formatPosition(captured.position)} · captured again when you click`
     : 'No recorded-video position found. Open uses the URL or saved position.';
   labels();
   buttons();
@@ -92,14 +100,19 @@ async function init() {
   else {
     const key = 'status:' + tab.id;
     let updated = false;
+    let last;
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'session' || !changes[key]) return;
       updated = true;
-      showStatus(changes[key].newValue);
+      last = changes[key].newValue;
+      showStatus(last);
     });
-    const last = (await chrome.storage.session.get(key))[key];
-    if (!updated) showStatus(last);
-    if (preferences.autoContinue && !pending) await send(true);
+    const stored = (await chrome.storage.session.get(key))[key];
+    if (!updated) {
+      last = stored;
+      showStatus(last);
+    }
+    if (preferences.autoContinue && !pending && !last?.interrupted) await send(true);
   }
 }
 init().catch((error) => report(error.message, true));

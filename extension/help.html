@@ -23,10 +23,10 @@
       saved history. Play from the beginning requests zero. Live/DVR position transfer is not supported.
     </p>
     <p>
-      By default, Frame Ferry pauses accessible browser videos during startup so playback resumes in mpv near the
-      position you just saw. If mpv fails, it resumes only videos it paused on the original page. Turn pausing off to
-      keep watching during startup; the mpv position may then be behind. Changed or inaccessible pages stay untouched.
-      The resolution setting is a limit, not a guarantee; mpv shows the actual stream resolution.
+      By default, Frame Ferry pauses accessible browser videos at handoff start and reads the main video's paused
+      position. If mpv startup fails, Frame Ferry tries to resume the same videos on the original page. If the panel
+      cannot confirm that they resumed, check the tab. Turn pausing off to keep watching during startup; the mpv
+      position may then be behind. The resolution setting is a limit; mpv shows the actual stream resolution.
     </p>
     <h2>Privacy</h2>
     <p>

@@ -18,23 +18,30 @@ export function normalize(value = {}) {
 export async function settings() {
   return normalize((await chrome.storage.local.get('preferences')).preferences);
 }
+export function isYouTubeNoCookie(host) {
+  return host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com');
+}
+export function youtubeVideoId(url) {
+  const host = url.hostname;
+  if (host === 'youtu.be') return url.pathname.split('/')[1] || null;
+  if (host === 'youtube.com' || host.endsWith('.youtube.com') || isYouTubeNoCookie(host)) {
+    return url.pathname === '/watch'
+      ? url.searchParams.get('v') || null
+      : (url.pathname.match(/^\/(shorts|embed|live)\/([^/]+)/)?.[2] ?? null);
+  }
+  return undefined;
+}
 export function sameVideo(first, second) {
   function identity(text) {
     const url = new URL(text);
-    const host = url.hostname.toLowerCase();
-    if (host === 'youtu.be') return 'youtube:' + url.pathname.split('/')[1];
-    if (host === 'youtube.com' || host.endsWith('.youtube.com') || host.endsWith('.youtube-nocookie.com')) {
-      const id =
-        url.pathname === '/watch'
-          ? url.searchParams.get('v')
-          : url.pathname.match(/^\/(shorts|embed|live)\/([^/]+)/)?.[2];
-      if (id) return 'youtube:' + id;
-    }
-    url.hash = '';
+    const id = youtubeVideoId(url);
+    if (id !== undefined) return id && `youtube:${id}`;
+    if (/^#t=(?:npt:)?(?:\d+:){0,2}\d+(?:\.\d+)?(?:,(?:\d+:){0,2}\d+(?:\.\d+)?)?$/.test(url.hash)) url.hash = '';
     return url.href;
   }
   try {
-    return identity(first) === identity(second);
+    const id = identity(first);
+    return Boolean(id && id === identity(second));
   } catch {
     return false;
   }
