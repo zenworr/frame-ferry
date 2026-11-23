@@ -3,7 +3,10 @@ local url = "https://www.youtube.com/watch?v=example"
 local function stream(protocol)
     return { protocol = protocol or "https", url = "https://media.example/video" }
 end
-local function player(info, version, path, status, existing, options)
+local curl_option = "file-local-options/curl-max-request-size"
+local curl_info = "option-info/curl-max-request-size"
+local function player(info, version, path, status, existing, options, curl)
+    curl = curl or {}
     local p = mock("config/mpv/scripts/youtube.lua", {
         options = options,
         utils = {
@@ -16,7 +19,15 @@ local function player(info, version, path, status, existing, options)
     p.properties["ffmpeg-version"] = version or "n9.0.1"
     p.properties["file-local-options/stream-lavf-o"] = existing
     p.properties["options/network-timeout"] = 60
+    p.properties["options/curl-enabled"] = curl.enabled
+    p.properties[curl_option] = curl.user_size or 0
+    p.properties[curl_info] = { ["default-value"] = 0, ["set-from-commandline"] = curl.user_size ~= nil }
     p.hook("on_load", 5)
+    p.hook("on_load", 9)
+    if curl.provider_size ~= nil then
+        p.properties[curl_option] = curl.provider_size
+        p.properties[curl_info .. "/set-locally"] = true
+    end
     p.properties["user-data/mpv/ytdl/json-subprocess-result"] = { status = status or 0, stdout = "metadata" }
     p.hook("on_load", 20)
     return p
@@ -77,4 +88,21 @@ local p = player(stream(), nil, nil, nil, original)
 for key, value in pairs(original) do
     assert(p.properties["file-local-options/stream-lavf-o"][key] == value, "existing transport option was overwritten")
 end
-print("YouTube bounded requests: stream scope, FFmpeg compatibility, timeouts, and user options passed")
+local function curl_player(info, version, options, curl)
+    curl = curl or {}
+    curl.enabled = true
+    return player(info, version, nil, nil, nil, options, curl).properties
+end
+local active = curl_player(stream(), "n8.0")
+assert(active[curl_option] == 1048576, "curl must not depend on the FFmpeg version")
+assert(active["file-local-options/stream-lavf-o"] == nil)
+assert(curl_player(stream(), nil, { http_chunk_size = 65536 })[curl_option] == 65536)
+assert(curl_player(stream("m3u8_native"))[curl_option] == 0)
+assert(curl_player({ is_live = true, requested_formats = { stream() } })[curl_option] == 0)
+assert(curl_player(stream(), nil, nil, { provider_size = 0 })[curl_option] == 0)
+assert(curl_player(stream(), nil, nil, { provider_size = 262144 })[curl_option] == 262144)
+assert(curl_player(stream(), nil, nil, { user_size = 0, provider_size = 262144 })[curl_option] == 0)
+assert(curl_player(stream(), nil, { http_chunk_size = 0 }, { provider_size = 262144 })[curl_option] == 262144)
+local disabled = player(stream(), nil, nil, nil, nil, nil, { enabled = false }).properties
+assert(disabled[curl_option] == 0 and disabled["file-local-options/stream-lavf-o"].request_size == "1048576")
+print("YouTube bounded requests: stream scope, curl and FFmpeg, timeouts, and option precedence passed")

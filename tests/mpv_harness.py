@@ -163,6 +163,10 @@ if isinstance(action, dict):
     action = info.pop('media', 'audio.wav')
 base = 'http://127.0.0.1:{self.server.server_port}/'
 info['url'] = base + (action if action in ('stall', 'denied', 'header', 'buffer', 'video.mp4', 'broken-video.mp4') else 'audio.wav')
+if 'provider_chunk_size' in info:
+    info['requested_downloads'] = [{{
+        'url': info['url'], 'protocol': 'http', 'ext': 'wav', 'vcodec': 'none', 'acodec': 'pcm_s16le',
+        'downloader_options': {{'http_chunk_size': info.pop('provider_chunk_size')}}}}]
 if info.pop('split', False):
     info['requested_formats'] = [
         {{'url': info['url'], 'protocol': 'http', 'ext': 'mp4', 'vcodec': 'mpeg4', 'acodec': 'none'}},

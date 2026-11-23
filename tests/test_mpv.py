@@ -35,39 +35,66 @@ class MpvTests(unittest.TestCase):
         )
 
     def test_youtube_transport_and_cache_in_real_mpv(self):
-        p = self.player(
-            {'primary': {'protocol': 'http'}},
-            media_seconds=180,
-            options=(
-                f'--include={ROOT}/config/mpv/mpv.conf',
-                '--vo=null',
-                '--ao=null',
-                '--pause=yes',
-                '--save-position-on-quit=no',
-                '--no-resume-playback',
-            ),
-        )
-        p.wait_loaded('primary')
-        self.assertEqual(p.get('options/network-timeout'), 60)
-        self.assertGreater(p.get('options/cache-secs'), 180)
-        self.assertEqual(p.get('options/demuxer-max-bytes'), 300 * 1024 * 1024)
-        p.wait(lambda: (p.get('demuxer-cache-duration') or 0) > 60)
-        version = re.match(r'^n?(\d+)\.', p.get('ffmpeg-version'))
-        if not version or int(version[1]) < 9:
-            self.assertNotIn('request_size', p.get('options/stream-lavf-o'))
-            return
-        p.wait(lambda: len(p.requests) >= 3)
-        for requested, _port in p.requests:
-            first, last = requested.split('=')[1].split('-')
-            self.assertTrue(last, 'unbounded request used for YouTube media')
-            self.assertLessEqual(int(last) - int(first) + 1, 1024 * 1024)
-        self.assertEqual(len({port for _, port in p.requests}), 1, 'HTTP connection was not reused')
-        other = f'http://127.0.0.1:{p.server.server_port}/audio.wav'
-        p.command('loadfile', other)
-        p.wait(lambda: p.get('user-data/test/ready') and p.get('path') == other)
-        self.assertNotIn(
-            'request_size', p.get('options/stream-lavf-o'), 'YouTube transport options leaked to another site'
-        )
+        def check_transport(*backend_options):
+            p = self.player(
+                {'primary': {'protocol': 'http'}},
+                media_seconds=180,
+                options=(
+                    f'--include={ROOT}/config/mpv/mpv.conf',
+                    '--vo=null',
+                    '--ao=null',
+                    '--pause=yes',
+                    '--save-position-on-quit=no',
+                    '--no-resume-playback',
+                    *backend_options,
+                ),
+            )
+            p.wait_loaded('primary')
+            self.assertEqual(p.get('options/network-timeout'), 60)
+            self.assertGreater(p.get('options/cache-secs'), 180)
+            self.assertEqual(p.get('options/demuxer-max-bytes'), 300 * 1024 * 1024)
+            p.wait(lambda: (p.get('demuxer-cache-duration') or 0) > 60)
+            curl = p.get('options/curl-enabled')
+            version = re.match(r'^n?(\d+)\.', p.get('ffmpeg-version'))
+            if not curl and (not version or int(version[1]) < 9):
+                self.assertNotIn('request_size', p.get('options/stream-lavf-o'))
+                return curl
+            p.wait(lambda: len(p.requests) >= 3)
+            for requested, _port in p.requests:
+                first, last = requested.split('=')[1].split('-')
+                self.assertTrue(last, 'unbounded request used for YouTube media')
+                self.assertLessEqual(int(last) - int(first) + 1, 1024 * 1024)
+            self.assertEqual(len({port for _, port in p.requests}), 1, 'HTTP connection was not reused')
+            other = f'http://127.0.0.1:{p.server.server_port}/audio.wav'
+            p.command('loadfile', other)
+            p.wait(lambda: p.get('user-data/test/ready') and p.get('path') == other)
+            if curl:
+                self.assertEqual(p.get('options/curl-max-request-size'), 0, 'YouTube chunk size leaked to another site')
+            self.assertNotIn(
+                'request_size', p.get('options/stream-lavf-o'), 'YouTube transport options leaked to another site'
+            )
+            return curl
+
+        if check_transport():
+            with self.subTest(backend='lavf'):
+                self.assertFalse(check_transport('--curl-enabled=no'))
+
+    def test_youtube_curl_request_size_precedence(self):
+        curl_size = 'options/curl-max-request-size'
+        for provider, expected, options in (
+            (262144, 262144, ()),
+            (0, 0, ()),
+            (262144, 0, ('--curl-max-request-size=0',)),
+            (262144, 262144, ('--script-opts-append=youtube-http_chunk_size=0',)),
+        ):
+            with self.subTest(provider=provider, options=options):
+                p = self.player({'primary': {'provider_chunk_size': provider}}, options=('--pause=yes', *options))
+                p.wait_loaded('primary')
+                if not p.get('options/curl-enabled'):
+                    self.skipTest('This fixture requires the mpv curl backend')
+                self.assertEqual(p.get(curl_size), expected)
+                first_range, _port = p.requests[0]
+                self.assertEqual(first_range, 'bytes=0-' + (str(expected - 1) if expected else ''))
 
     def test_sustained_buffering_recovers_automatically_at_the_same_position(self):
         p = self.player(
@@ -75,8 +102,8 @@ class MpvTests(unittest.TestCase):
         )
         p.wait_loaded('primary')
         version = re.match(r'^n?(\d+)\.', p.get('ffmpeg-version'))
-        if not version or int(version[1]) < 9:
-            self.skipTest('The bounded HTTP stall fixture requires FFmpeg 9+')
+        if not p.get('options/curl-enabled') and (not version or int(version[1]) < 9):
+            self.skipTest('The bounded HTTP stall fixture requires the curl backend or FFmpeg 9+')
         p.wait(lambda: p.get('paused-for-cache'), timeout=8)
         position = p.get('time-pos')
         started = time.monotonic()
@@ -90,6 +117,7 @@ class MpvTests(unittest.TestCase):
         self.assertAlmostEqual(float(p.get('file-local-options/start')), position, delta=0.5)
         self.assertGreaterEqual(p.get('time-pos'), position - 0.5)
         self.assertEqual((p.root / 'calls').read_text().splitlines(), ['primary', 'authenticated'])
+        self.assertIn('Playback stalled while buffering', p.log.read_text())
         self.assertEqual(p.get('playlist-count'), 1)
         self.assertFalse(p.get('pause'))
 

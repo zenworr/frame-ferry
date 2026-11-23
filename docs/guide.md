@@ -33,6 +33,8 @@ Frame Ferry uses its own mpv configuration. Normal `mpv URL` commands still use 
 
 Software decoding is the default. If playback drops frames, use `Ctrl+h` to compare hardware decoding. HDR output depends on your driver, display, and compositor.
 
+For eligible recorded YouTube streams, [`http_chunk_size`](../README.md#frame-ferry-configuration) limits HTTP range requests to 1 MiB by default. This works with mpv's curl backend (mpv 0.42+) or with FFmpeg 9+ when mpv does not use curl. Set `0` to leave mpv's HTTP settings unchanged.
+
 ## Position and quality
 
 Continue reads the main-page video's position when clicked. It does not read positions from child frames or support live/DVR position transfer. If no position is available, playback uses the URL or saved history. Start from the beginning explicitly requests zero.

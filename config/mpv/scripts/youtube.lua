@@ -33,7 +33,8 @@ local MIN_FULL_QUALITY_BUDGET = 10
 local MIN_EXTRACTION_TIMEOUT = 0.1
 local EXTRACTION_MARGIN = 0.5
 local MIN_CHUNKED_FFMPEG = 9
-local HOOK = { prepare = 5, retain = 15, transport = 20, recover = 40 }
+local CURL_CHUNK_SIZE = "curl-max-request-size"
+local HOOK = { prepare = 5, transport_preferences = 9, retain = 15, transport = 20, recover = 40 }
 local VIDEO_WIDTH = { uhd = 3840, uhd8k = 7680 }
 local OSD_SECONDS = { short = 2, long = 4 }
 local SLATE = {
@@ -337,6 +338,25 @@ mp.add_hook("on_load", HOOK.retain, function()
     mp.set_property("stream-open-filename", "memory://")
 end)
 
+local explicit_curl_size
+mp.add_hook("on_load", HOOK.transport_preferences, function()
+    explicit_curl_size = nil
+    if
+        not youtube_url
+        or showing_slate
+        or options.http_chunk_size == 0
+        or not mp.get_property_bool("options/curl-enabled")
+    then
+        return
+    end
+    -- mpv's yt-dlp hook can replace an explicit value, including zero, with a provider limit.
+    local info = mp.get_property_native("option-info/" .. CURL_CHUNK_SIZE, {})
+    local size = mp.get_property_number("file-local-options/" .. CURL_CHUNK_SIZE)
+    if info["set-from-commandline"] or info["set-locally"] or size ~= info["default-value"] then
+        explicit_curl_size = size
+    end
+end)
+
 mp.add_hook("on_load", HOOK.transport, function()
     if not youtube_url or showing_slate then
         return
@@ -353,12 +373,7 @@ mp.add_hook("on_load", HOOK.transport, function()
         or info.live_status == "is_live"
         or info.live_status == "post_live"
         or info.live_status == "is_upcoming"
-    if live_stream then
-        return
-    end
-    -- Bounded HTTP requests require FFmpeg 9 or newer.
-    local version = tonumber(mp.get_property("ffmpeg-version", ""):match("^n?(%d+)%.")) or 0
-    if version < MIN_CHUNKED_FFMPEG or options.http_chunk_size == 0 then
+    if live_stream or options.http_chunk_size == 0 then
         return
     end
     local formats = info.requested_formats or info.requested_downloads or { info }
@@ -375,7 +390,21 @@ mp.add_hook("on_load", HOOK.transport, function()
             return
         end
     end
-    -- yt-dlp's downloader chunk size does not carry over to mpv's media reader.
+    if mp.get_property_bool("options/curl-enabled") then
+        local property = "file-local-options/" .. CURL_CHUNK_SIZE
+        if explicit_curl_size ~= nil then
+            if mp.get_property_number(property) ~= explicit_curl_size then
+                mp.set_property_number(property, explicit_curl_size)
+            end
+        elseif not mp.get_property_bool("option-info/" .. CURL_CHUNK_SIZE .. "/set-locally") then
+            mp.set_property_number(property, options.http_chunk_size)
+        end
+        return
+    end
+    local version = tonumber(mp.get_property("ffmpeg-version", ""):match("^n?(%d+)%.")) or 0
+    if version < MIN_CHUNKED_FFMPEG then
+        return
+    end
     local stream = mp.get_property_native("file-local-options/stream-lavf-o", {})
     local chunk = tostring(options.http_chunk_size)
     for key, value in pairs({ request_size = chunk, multiple_requests = "1", short_seek_size = chunk }) do

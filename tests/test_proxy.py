@@ -127,6 +127,9 @@ class ProxyTests(unittest.TestCase):
                         finally:
                             os.kill(reply['pid'], signal.SIGTERM)
                             processes[-1].wait(timeout=5)
-            self.assertIn('http://video.invalid:80/fixture.wav', requests)
+            self.assertTrue(
+                {'http://video.invalid/fixture.wav', 'http://video.invalid:80/fixture.wav'}.intersection(requests),
+                requests,
+            )
             self.assertIn('CONNECT video.invalid:443', requests)
             self.assertIn('GET /fixture.wav HTTP/1.1', requests)
