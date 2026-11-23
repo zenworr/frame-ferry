@@ -30,6 +30,7 @@ local PLAYBACK_POLL_INTERVAL = 1
 local SYNC_TOLERANCE = 1
 local END_MARGIN = 1
 local MIN_FULL_QUALITY_BUDGET = 10
+local MIN_RETAINED_BUDGET = 1
 local MIN_EXTRACTION_TIMEOUT = 0.1
 local EXTRACTION_MARGIN = 0.5
 local MIN_CHUNKED_FFMPEG = 9
@@ -47,7 +48,8 @@ local SLATE = {
 }
 
 local next_mode, mode, youtube_url, failed, unsupported, pause_before_error
-local timer, playback_timer, stall_started, stall_reason, last_reader, live_stream, timed_out, started, loaded
+local timer, playback_timer, stall_started, stall_reason, last_audio, last_reader
+local live_stream, timed_out, started, loaded
 local use_cookies, requires_auth, last_position, resume_position
 local showing_slate, announced_size, playlist_entry, selected_format, candidate_path, candidate_file
 local slate = mp.create_osd_overlay("ass-events")
@@ -69,7 +71,7 @@ local routes = {
     hls = { next = "fallback", budget = 7, label = "HLS", notice = "Trying selected quality over HLS" },
     retained = {
         next = "fallback",
-        budget = 7,
+        budget = 2,
         label = "Earlier stream",
         notice = "Trying the earlier stream without another extraction",
     },
@@ -100,7 +102,7 @@ local function cancel_playback_timer()
     if playback_timer then
         playback_timer:kill()
     end
-    stall_started, stall_reason, last_reader = nil, nil, nil
+    stall_started, stall_reason, last_audio, last_reader = nil, nil, nil, nil
 end
 
 local function abort_load(target)
@@ -130,16 +132,15 @@ local function check_playback()
         cancel_playback_timer()
         return
     end
-    local reason
+    local reason, audio, reader
     if mp.get_property_bool("paused-for-cache", false) then
         reason = "Playback stalled while buffering."
     elseif
         mp.get_property_number("current-tracks/video/id")
         and not mp.get_property_bool("current-tracks/video/image", false)
     then
-        local audio = mp.get_property_number("audio-pts")
+        audio = mp.get_property_number("audio-pts")
         local cache = mp.get_property_native("demuxer-cache-state", {})
-        local reader
         for _, stream in ipairs(cache["ts-per-stream"] or {}) do
             if stream.type == "video" then
                 reader = stream["reader-pts"]
@@ -149,10 +150,11 @@ local function check_playback()
         if reader ~= last_reader then
             stall_started, stall_reason = nil, nil
         end
-        last_reader = reader
         -- A failed video demuxer can leave audio playing without a cache pause or end-file event.
         if
             audio
+            and last_audio
+            and audio > last_audio
             and type(reader) == "number"
             and audio > reader + SYNC_TOLERANCE
             and audio < mp.get_property_number("duration", 0) - END_MARGIN
@@ -160,6 +162,7 @@ local function check_playback()
             reason = "Video stream stopped while audio continued."
         end
     end
+    last_audio, last_reader = audio, reader
     if not reason then
         stall_started, stall_reason = nil, nil
     elseif reason ~= stall_reason then
@@ -247,8 +250,14 @@ mp.add_hook("on_load", HOOK.prepare, function()
             mode = "fallback"
         end
     end
+    local fallback_reserve = routes.fallback.budget * timeout_scale
     if mode == "fallback" and candidate_path then
-        mode = "retained"
+        -- A replay needs no extraction. Prefer a fresh extraction if there is too little time for both.
+        if remaining - fallback_reserve >= MIN_RETAINED_BUDGET * timeout_scale then
+            mode = "retained"
+        else
+            clear_candidate()
+        end
     end
     mp.set_property("user-data/youtube-quality/route", mode)
     showing_slate = mode == "error" or mode == "browser"
@@ -261,20 +270,17 @@ mp.add_hook("on_load", HOOK.prepare, function()
             "stream-open-filename",
             string.format("av://lavfi:color=c=%s:s=%dx%d:r=1", SLATE.color, SLATE.width, SLATE.height)
         )
-        mp.set_property(
-            "file-local-options/force-media-title",
-            mode == "browser" and "Continue in browser" or "YouTube playback failed"
-        )
         mp.set_property_bool("pause", true)
         return
     end
 
     mp.set_property("user-data/youtube-quality/error", "")
-    -- Reserve time for a usable fallback, including a short availability wait.
-    local budget = math.min(
-        routes[mode].budget * timeout_scale,
-        remaining - ((mode == "fallback" or mode == "retained") and 0 or routes.fallback.budget * timeout_scale)
-    )
+    -- Leave time for a fresh extraction even after an earlier stream fails to open.
+    local reserve = mode == "fallback" and 0 or fallback_reserve
+    if mode ~= "retained" and candidate_path then
+        reserve = reserve + routes.retained.budget * timeout_scale
+    end
+    local budget = math.min(routes[mode].budget * timeout_scale, remaining - reserve)
     local raw = mp.get_property_native("options/ytdl-raw-options", {})
     if mode == "hls" or mode == "fallback" then
         use_cookies = requires_auth
@@ -298,7 +304,7 @@ mp.add_hook("on_load", HOOK.prepare, function()
     -- Bound extraction and media opening, including HLS segment retry loops.
     timer = mp.add_timeout(budget, function()
         mp.set_property("user-data/youtube-quality/error", "Loading exceeded the recovery time limit.")
-        abort_load(routes[mode].next)
+        abort_load(nil)
     end)
 end)
 
@@ -468,7 +474,7 @@ mp.add_hook("on_after_end_file", HOOK.recover, function()
     failed = false
     if not next_mode then
         next_mode = routes[mode].next
-        if unsupported and mode ~= "hls" and mode ~= "fallback" then
+        if unsupported and (mode == "primary" or mode == "authenticated" or mode == "token") then
             next_mode = "hls"
         end
         if mode == "primary" and (use_cookies or options.cookies_browser == "") and next_mode == "authenticated" then
@@ -500,6 +506,7 @@ mp.register_event("file-loaded", function()
     end
     mp.set_property_bool("pause", true)
     slate.res_x, slate.res_y = SLATE.width, SLATE.height
+    -- A forced media title can persist on the playlist entry after Retry.
     local title = mode == "browser" and "Continue in browser" or "YouTube playback failed"
     local detail = mp.get_property("user-data/youtube-quality/error", "")
     if mode == "browser" then

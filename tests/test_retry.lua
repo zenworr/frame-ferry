@@ -1,9 +1,12 @@
 local mock = dofile("tests/mp_mock.lua")
-local function player(recovery_timeout)
-    local p = mock(
-        "config/mpv/scripts/youtube.lua",
-        { options = { cookies_browser = "chromium:test", recovery_timeout = recovery_timeout } }
-    )
+local function player(recovery_timeout, cookies_browser, cookies_initial)
+    local p = mock("config/mpv/scripts/youtube.lua", {
+        options = {
+            cookies_browser = cookies_browser or "chromium:test",
+            cookies_initial = cookies_initial,
+            recovery_timeout = recovery_timeout,
+        },
+    })
     function p.load(url, raw)
         p.properties.path = url
         p.properties["options/ytdl-raw-options"] = raw or { ["format-sort"] = "res:2160" }
@@ -135,6 +138,25 @@ for _, limit in ipairs({ 10, 60, 300 }) do
     assert(expired.route() == "error", "configured recovery deadline was not used")
 end
 
+for _, case in ipairs({
+    { "", false, nil, "token" },
+    { "chromium:test", false, nil, "authenticated" },
+    { "chromium:test", true, nil, "token" },
+    { "chromium:test", false, { cookies = "fixture.txt" }, "token" },
+}) do
+    for _, failure in ipairs({ "error", "timeout" }) do
+        local p = player(nil, case[1], case[2])
+        p.load(url, case[3])
+        if failure == "timeout" then
+            p.timeout()
+        else
+            p.finish("error")
+        end
+        p.load(url, case[3])
+        assert(p.route() == case[4], "route did not honor cookie settings after " .. failure)
+    end
+end
+
 local e = player()
 e.load(url)
 e.keys["Alt+q"]()
@@ -207,7 +229,7 @@ f.finish("stop")
 f.load(url)
 f.loaded()
 assert(f.route() == "browser", "browser request was replaced by automatic recovery")
-assert(f.properties["file-local-options/force-media-title"] == "Continue in browser")
+assert(f.overlay.data:find("Continue in browser", 1, true))
 local g = player()
 g.load(url .. "&t=1#old")
 g.loaded()
@@ -240,28 +262,39 @@ browser_failure.bindings["youtube-browser"]()
 assert(#browser_failure.commands == 0, "failed browser launch closed mpv")
 assert(browser_failure.messages[#browser_failure.messages][1] == "Could not open the browser")
 
-local retained = player()
-retained.load(url)
-retained.clock = 6
-retained.finish("error")
-retained.load(url)
-retained.result("yt-dlp-mpv: limited authenticated formats; try token route", "{}")
-retained.clock = 14
-retained.finish("error")
-retained.load(url)
-retained.clock = 22
-retained.finish("error")
-retained.load(url)
-assert(retained.route() == "retained", "earlier stream was discarded")
-local candidate = retained.properties["file-local-options/ytdl-raw-options"]["frameferry-candidate"]
-assert(type(candidate) == "string")
-retained.timeout()
-assert(not io.open(candidate), "candidate file leaked after failure")
-retained.load(url)
-assert(retained.route() == "fallback", "retained stream caused a retry loop")
-retained.timeout()
-retained.load(url)
-assert(retained.route() == "error" and retained.clock == 30, "retained stream extended the load budget")
+for _, late in ipairs({ false, true }) do
+    local retained = player()
+    retained.load(url)
+    retained.timeout()
+    retained.load(url)
+    retained.result("yt-dlp-mpv: limited authenticated formats; try token route", "{}")
+    retained.clock = 11
+    retained.finish("error")
+    retained.load(url)
+    assert(retained.route() == "token")
+    retained.timeout()
+    retained.load(url)
+    assert(retained.route() == "hls")
+    retained.timeout()
+    if late then
+        retained.clock = 22.5
+    end
+    retained.load(url)
+    if not late then
+        assert(retained.route() == "retained", "earlier stream was discarded")
+        local candidate = retained.properties["file-local-options/ytdl-raw-options"]["frameferry-candidate"]
+        assert(type(candidate) == "string")
+        assert(retained.timers[#retained.timers].seconds == 2)
+        retained.timeout()
+        assert(not io.open(candidate), "candidate file leaked after failure")
+        retained.load(url)
+    end
+    assert(retained.route() == "fallback", "retained stream took priority over fresh fallback without enough time")
+    assert(retained.timers[#retained.timers].seconds == 7, "fresh fallback lost its reserve")
+    retained.timeout()
+    retained.load(url)
+    assert(retained.route() == "error" and retained.clock <= 30, "retained stream extended the load budget")
+end
 
 for _, change in ipairs({ "item", "quality" }) do
     local p = player()

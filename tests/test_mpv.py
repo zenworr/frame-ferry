@@ -135,7 +135,7 @@ class MpvTests(unittest.TestCase):
 
     def test_error_screen_and_manual_retry(self):
         p = self.player({'*': 'fail'})
-        p.wait(lambda: p.get('media-title') == 'YouTube playback failed' and p.get('video-params'))
+        p.wait(lambda: p.get('user-data/youtube-quality/route') == 'error' and p.get('video-params'))
         self.assertTrue(p.get('pause'))
         self.assertTrue(p.get('ytdl'), 'error screen unloaded the extraction hook')
         self.assertEqual(p.get('playlist-count'), 1)
@@ -228,19 +228,27 @@ class MpvTests(unittest.TestCase):
     def test_retry_after_error_screen_restores_playback_position(self):
         p = self.player()
         p.wait_loaded('primary')
+        title = p.get('media-title')
         p.command('seek', 30, 'absolute+exact')
         p.wait(lambda: (p.get('time-pos') or 0) >= 29.9 and not p.get('seeking'))
         p.command('set_property', 'pause', True)
         position = p.get('time-pos')
         p.routes.write_text(json.dumps({'*': 'fail'}))
         p.command('script-binding', 'youtube/youtube-retry')
-        p.wait(lambda: p.get('media-title') == 'YouTube playback failed' and p.get('video-params'))
+        p.wait(lambda: p.get('user-data/youtube-quality/route') == 'error' and p.get('video-params'))
         p.routes.write_text('{}')
         p.command('script-binding', 'youtube/youtube-retry')
         p.wait(lambda: len((p.root / 'calls').read_text().splitlines()) == 7)
         p.wait_loaded('primary')
         self.assertAlmostEqual(p.get('time-pos'), position, delta=0.2)
         self.assertTrue(p.get('pause'))
+        self.assertFalse(p.get('user-data/youtube-quality/slate'))
+        self.assertEqual(p.get('media-title'), title)
+        self.assertNotEqual(p.get('playlist/0/title'), 'YouTube playback failed')
+        raw = p.get('file-local-options/ytdl-raw-options')
+        self.assertEqual(raw['frameferry-route'], 'primary')
+        self.assertNotIn('cookies-from-browser', raw)
+        self.assertFalse(p.get('stream-open-filename').startswith('av://lavfi:'))
 
     def test_retained_authenticated_stream_survives_failed_alternatives(self):
         p = self.player(
@@ -254,10 +262,13 @@ class MpvTests(unittest.TestCase):
                 },
             },
             provider=False,
+            url=URL + '?t=12.5',
+            options=('--pause=yes',),
         )
         p.wait_loaded('retained')
         self.assertEqual((p.root / 'calls').read_text().splitlines(), ['primary', 'authenticated', 'hls'])
-        self.assertEqual(p.get('media-title'), 'Offline fixture')
+        self.assertTrue(p.requests, 'the server did not accept the retained stream headers')
+        self.assertAlmostEqual(p.get('time-pos'), 12.5, delta=0.2)
         self.assertEqual(p.get('playlist-count'), 1)
         candidate = p.get('file-local-options/ytdl-raw-options')['frameferry-candidate']
         self.assertFalse(Path(candidate).exists(), 'successful replay left its temporary file')
@@ -324,10 +335,10 @@ class MpvTests(unittest.TestCase):
         a = self.player({'*': 'fail', 'authenticated': {'width': 1920, 'height': 1080}})
         b = self.player({'*': 'fail'})
         a.wait_loaded('retained')
-        b.wait(lambda: b.get('media-title') == 'YouTube playback failed')
+        b.wait(lambda: b.get('user-data/youtube-quality/route') == 'error')
         a.routes.write_text(json.dumps({'*': 'fail'}))
         a.command('loadfile', URL + '-next')
-        a.wait(lambda: a.get('media-title') == 'YouTube playback failed')
+        a.wait(lambda: a.get('user-data/youtube-quality/route') == 'error')
         self.assertNotIn('frameferry-candidate', a.get('file-local-options/ytdl-raw-options'))
 
     def test_players_have_independent_routes(self):
@@ -399,16 +410,24 @@ class MpvTests(unittest.TestCase):
                 self.player(
                     {
                         '*': 'stall',
-                        'primary': 'fail',
                         'authenticated': {'width': 1920, 'height': 1080, 'media': 'stall'},
                     }
                 ),
                 ['primary', 'authenticated', 'token', 'hls', 'fallback'],
             ),
         ]
+
+        def fallback_budget(player):
+            raw = player.get('file-local-options/ytdl-raw-options') or {}
+            return float(raw['frameferry-timeout']) if raw.get('frameferry-route') == 'fallback' else 0
+
+        for p, expected in cases:
+            with self.subTest(fallback_budget=expected):
+                budget = p.wait(lambda p=p: fallback_budget(p), timeout=28)
+                self.assertGreaterEqual(budget, 6)
         for p, expected in cases:
             with self.subTest(calls=expected):
-                p.wait(lambda p=p: p.get('media-title') == 'YouTube playback failed', timeout=33)
+                p.wait(lambda p=p: p.get('user-data/youtube-quality/route') == 'error', timeout=33)
                 elapsed = time.monotonic() - p.started
                 self.assertLess(elapsed, 32)
                 self.assertGreater(elapsed, 25)
