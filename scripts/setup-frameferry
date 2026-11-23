@@ -7,7 +7,9 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -15,6 +17,76 @@ from frameferry_config import DEFAULTS, config_path, load_config, supported_exec
 from frameferry_install import BROWSERS, atomic_write, digest, extension_id
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def original_is_in_place(path, current, checksum, backup):
+    try:
+        saved = backup.lstat()
+        if stat.S_ISLNK(current.st_mode) and stat.S_ISLNK(saved.st_mode):
+            return path.readlink() == backup.readlink()
+        return (
+            checksum is not None
+            and current.st_mode == saved.st_mode
+            and current.st_mtime_ns == saved.st_mtime_ns
+            and checksum == digest(backup)
+        )
+    except OSError:
+        return False
+
+
+def uninstall(ledger, records):
+    kept = {}
+    failed = False
+    for name, record in records.items():
+        path = Path(name)
+        backup = Path(record['backup']) if record['backup'] else None
+        try:
+            try:
+                current = path.lstat()
+            except FileNotFoundError:
+                current = None
+            checksum = digest(path) if current and stat.S_ISREG(current.st_mode) else None
+            # The original can already be in place if uninstall stopped before it updated the ledger.
+            if backup and current and original_is_in_place(path, current, checksum, backup):
+                continue
+            if current and checksum != record['hash']:
+                kept[name] = record
+                print(f'Kept changed file: {path}')
+                continue
+            if backup:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(dir=path.parent) as directory:
+                    staged = Path(directory) / 'original'
+                    shutil.copy2(backup, staged, follow_symlinks=False)
+                    staged.replace(path)
+            elif current:
+                path.unlink(missing_ok=True)
+            else:
+                continue
+            print(f'Removed managed version: {path}')
+        except OSError as error:
+            kept[name] = record
+            failed = True
+            action = f'restore {path} from {backup}' if backup else f'remove {path}'
+            print(
+                f'Could not {action}: {error}. Check that the paths are accessible, '
+                'then run ./scripts/install.sh --uninstall again.',
+                file=sys.stderr,
+            )
+    try:
+        atomic_write(ledger, (json.dumps(kept, indent=2) + '\n').encode(), 0o600)
+    except OSError as error:
+        print(
+            f'Could not update {ledger}: {error}. Check access, then run ./scripts/install.sh --uninstall again.',
+            file=sys.stderr,
+        )
+        return 1
+    if failed:
+        return 1
+    print(
+        'Remove Frame Ferry from the browser Extensions page. Component downloads and private logs remain; see README.'
+    )
+    return 0
 
 
 def main():
@@ -37,22 +109,7 @@ def main():
     ledger = state / 'installation.json'
     records = json.loads(ledger.read_text()) if ledger.exists() else {}
     if args.uninstall:
-        kept = {}
-        for name, record in records.items():
-            path = Path(name)
-            if path.is_file() and digest(path) == record['hash']:
-                path.unlink()
-                if record['backup']:
-                    shutil.copy2(record['backup'], path, follow_symlinks=False)
-                print(f'Removed managed version: {path}')
-            elif path.exists() or path.is_symlink():
-                kept[name] = record
-                print(f'Kept changed file: {path}')
-        atomic_write(ledger, (json.dumps(kept, indent=2) + '\n').encode(), 0o600)
-        print(
-            'Remove Frame Ferry from the browser Extensions page. Component downloads and private logs remain; see README.'
-        )
-        return 0
+        return uninstall(ledger, records)
     if sys.version_info < (3, 10) or sys.platform != 'linux':
         parser.error('Native Linux with Python 3.10+ is required.')
     try:
