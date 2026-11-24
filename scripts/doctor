@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from frameferry_config import MINIMUM_VERSIONS, load_config, supported_executable
-from frameferry_install import BROWSERS, extension_id
+from frameferry_install import BROWSERS, digest, extension_id
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -65,13 +65,19 @@ def main():
     for name in (
         'scripts/uosc/main.lua',
         'scripts/uosc/lib/utils.lua',
-        'scripts/thumbfast.lua',
         'scripts/sponsorblock.lua',
         'scripts/sponsorblock_shared/main.lua',
         'scripts/sponsorblock_shared/sponsorblock.py',
     ):
         target = player / name
         check(str(target), target.is_file() and target.stat().st_size > 0)
+    thumbfast = player / 'scripts/thumbfast.lua'
+    expected_thumbfast = (ROOT / 'patches/thumbfast-low-resolution.sha256').read_text().split()[0]
+    try:
+        patched = thumbfast.is_file() and digest(thumbfast) == expected_thumbfast
+    except OSError:
+        patched = False
+    check(str(thumbfast) + ('' if patched else ' does not match; rerun scripts/install-mpv-ui.sh'), patched)
     expected_hook = 'ytdl_path=' + str(data / 'bin/yt-dlp-mpv')
     hook = player / 'script-opts/ytdl_hook.conf'
     check('Absolute extractor path', hook.is_file() and hook.read_text().strip() == expected_hook)

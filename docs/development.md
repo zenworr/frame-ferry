@@ -47,7 +47,7 @@ make audit
 ```
 
 - `make check` runs Ruff, ESLint, ShellCheck, Luacheck, formatting checks, syntax checks, dependency checks, and offline tests. Real mpv tests are marked as skipped. Missing headless tools, lint warnings, stale dependency pins, and test failures stop the check.
-- `make test-player` requires mpv 0.41+ and FFmpeg. It runs the real playback, native handoff, and proxy tests. CI runs both `make check` and `make test-player`.
+- `make test-player` requires mpv 0.41+ and FFmpeg. It runs the real playback, native handoff, and proxy tests. CI runs both `make check` and `make test-player`. To include the right-click test with uosc, set `MPV_CONFIG_DIR` and `XDG_STATE_HOME` to test directories and run `scripts/install-mpv-ui.sh`. Set `FRAME_FERRY_UI_CONFIG` to that `MPV_CONFIG_DIR` when you run the tests.
 - `make test-slow` also tests the full recovery deadline with real mpv.
 - `make audit` contacts Python and npm advisory services for the locked development dependencies. Any reported vulnerability fails the check. Keep this network check separate from offline tests. External player tools and optional components are installed separately; setup and doctor check the required runtime tool versions.
 - `make format` applies the project formatters and safe lint fixes. Review the diff before committing.
@@ -68,7 +68,7 @@ uv pip compile requirements-dev.in --universal --python-version 3.10 --generate-
 make dev-setup
 ```
 
-The lock refresh uses [uv](https://docs.astral.sh/uv/). It is not required to run Frame Ferry. For player components, update the source pins and checksums in their installers and keep [third-party notices](../THIRD_PARTY.md) current.
+The lock refresh uses [uv](https://docs.astral.sh/uv/). It is not required to run Frame Ferry. For player components, update the source pins and checksums in their installers and keep [third-party notices](../THIRD_PARTY.md) current. If you change the thumbfast pin, refresh the offline source fixture. If you change the pin or patch, refresh `patches/thumbfast-low-resolution.sha256`.
 
 Name policy values and units. Put user-facing controls in the validated runtime configuration. Keep protocol limits and internal timing constants out of the browser request schema. Numeric test fixtures are exempt from magic-number lint rules.
 

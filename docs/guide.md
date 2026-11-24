@@ -57,6 +57,8 @@ Recovery has a 30-second default limit; see [Frame Ferry configuration](../READM
 
 During recorded YouTube playback, recovery starts automatically after the configured `stall_timeout` (10 seconds by default) of continuous buffering, or when the video stream stops advancing for that duration while audio continues. Pausing, seeking, or resumed playback cancels the timer. Recovery keeps your position and tries the remaining access methods before lowering quality. If the fallback also stalls, recovery stops at the error screen rather than repeating indefinitely. No shortcut is required; `Alt+q` remains an optional way to go directly to the fast fallback.
 
+Timeline previews do not pass browser cookies or extractor headers to the preview player. If no suitable low-resolution stream is available, the preview player tries the active stream. Some streams may play without previews.
+
 ## Account access and updates
 
 Both are off by default. Edit `script-opts/youtube.conf` in Frame Ferry's player directory:
@@ -86,7 +88,7 @@ The provider runs on demand, with no persistent server. It is installed under `~
 - **Playback fails:** the error message identifies the player log. Check current yt-dlp support and account requirements. Browser playback does not prove extraction will work.
 - **Shortcut does nothing:** configure it on the browser's extension-shortcuts page.
 
-Run `python3 scripts/doctor --browser helium`, with your browser selected, to check installed files and versions. It checks that managed recovery scripts match this checkout and that required UI and SponsorBlock files are present and nonempty. It does not test provider access or GPU output. Review logs for signed URLs and sensitive data before sharing them.
+Run `python3 scripts/doctor --browser helium`, with your browser selected, to check installed files and versions. It checks that managed recovery scripts and the patched thumbfast file match this checkout. It also checks that the required uosc and SponsorBlock files are present and nonempty. It does not test provider access or GPU output. Review logs for signed URLs and sensitive data before sharing them.
 
 ## Remove or restore
 
