@@ -9,14 +9,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from . import player_tests
 from .helpers import ROOT
 from .mpv_harness import URL, Player
 
 
-@unittest.skipUnless(
-    os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv'),
-    'run make test-player for real mpv tests',
-)
+@player_tests()
 class MpvTests(unittest.TestCase):
     def player(self, *args, **kwargs):
         p = Player(*args, **kwargs)
@@ -195,6 +193,7 @@ class MpvTests(unittest.TestCase):
         p.command('keypress', 'MBTN_RIGHT')
         p.wait(lambda: p.get('pause') is False)
 
+    @player_tests('ui')
     @unittest.skipUnless(os.environ.get('FRAME_FERRY_UI_CONFIG'), 'set FRAME_FERRY_UI_CONFIG to the installed UI')
     def test_right_click_toggles_pause_with_uosc(self):
         uosc = Path(os.environ['FRAME_FERRY_UI_CONFIG']) / 'scripts/uosc'
@@ -463,6 +462,7 @@ class MpvTests(unittest.TestCase):
         self.assertFalse(set(calls) & {'authenticated', 'token', 'hls'})
         self.assertEqual(p.get('playlist-count'), 1)
 
+    @player_tests('slow')
     @unittest.skipUnless(os.environ.get('MPV_SLOW_TESTS') == '1', 'run make test-slow for the 30-second watchdog')
     def test_continuous_data_cannot_bypass_total_deadline(self):
         cases = [

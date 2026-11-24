@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := check
-.PHONY: check check-tools check-player-tools dev-setup lint format syntax dependency-check audit test test-player test-slow install doctor
+.PHONY: check check-tools check-player-tools dev-setup lint format syntax dependency-check audit test test-player test-slow test-ui install doctor
 
 PYTHON ?= python3
 DEV_BIN := .venv/bin
@@ -55,18 +55,25 @@ dependency-check: check-tools
 	npm ls --all >/dev/null
 
 audit:
+	@test -x $(DEV_BIN)/pip-audit || \
+		{ echo 'Run make dev-setup with Python 3.11 or later before make audit.' >&2; exit 1; }
 	$(DEV_BIN)/pip-audit --strict --require-hashes --disable-pip -r requirements-dev.txt
 	npm run audit
 
 test:
-	FRAME_FERRY_PLAYER_TESTS=0 $(PYTHON) -m unittest discover -s tests -t . -v
+	FRAME_FERRY_PLAYER_TESTS=0 $(PYTHON) -m tests headless
 	@for file in tests/test_*.lua; do lua "$$file" || exit; done
 
 test-player: check-player-tools
-	FRAME_FERRY_PLAYER_TESTS=1 $(PYTHON) -m unittest discover -s tests -t . -v
+	FRAME_FERRY_PLAYER_TESTS=1 $(PYTHON) -m tests player
 
 test-slow: check-player-tools
-	FRAME_FERRY_PLAYER_TESTS=1 MPV_SLOW_TESTS=1 $(PYTHON) -m unittest discover -s tests -t . -p test_mpv.py -v
+	FRAME_FERRY_PLAYER_TESTS=1 MPV_SLOW_TESTS=1 $(PYTHON) -m tests slow
+
+test-ui: check-player-tools
+	@test -n "$$FRAME_FERRY_UI_CONFIG" || \
+		{ echo 'Set FRAME_FERRY_UI_CONFIG to the installed test UI. See docs/development.md.' >&2; exit 1; }
+	FRAME_FERRY_PLAYER_TESTS=1 $(PYTHON) -m tests ui
 
 install:
 	./scripts/install.sh

@@ -14,13 +14,12 @@ from unittest.mock import patch
 
 from frameferry_config import DEFAULTS
 
+from . import player_tests
 from .helpers import load_script
 
 
-@unittest.skipUnless(
-    os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv') and shutil.which('openssl'),
-    'run make test-player with mpv and OpenSSL',
-)
+@player_tests()
+@unittest.skipUnless(shutil.which('openssl'), 'OpenSSL is required for the proxy fixture')
 class ProxyTests(unittest.TestCase):
     def test_native_http_and_https_media_use_the_configured_proxy(self):
         native = load_script('frameferry-native')

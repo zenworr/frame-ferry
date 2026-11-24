@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from frameferry_config import DEFAULTS
 
+from . import player_tests
 from .helpers import ROOT, load_script, wait_for
 from .mpv_harness import Player
 
@@ -47,10 +48,7 @@ class NativeTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    @unittest.skipUnless(
-        os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv'),
-        'run make test-player for real mpv tests',
-    )
+    @player_tests()
     def test_real_native_handoff_starts_at_position_and_confirms_playback(self):
         player = Player(url=None)
         self.addCleanup(player.close)
@@ -87,10 +85,7 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(reply['outcome'], 'playing')
         self.assertAlmostEqual(observed[0], 30.625, delta=0.2)
 
-    @unittest.skipUnless(
-        os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv'),
-        'run make test-player for real mpv tests',
-    )
+    @player_tests()
     def test_browser_return_during_native_startup(self):
         for action in ('fast', 'slow', 'failed', 'quit'):
             with self.subTest(action=action):
@@ -180,10 +175,7 @@ end)
                 release.touch()
                 allow_poll.set()
 
-    @unittest.skipUnless(
-        os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv'),
-        'run make test-player for real mpv tests',
-    )
+    @player_tests()
     def test_native_reports_the_safe_player_failure_reason(self):
         player = Player({'*': 'fail'})
         self.addCleanup(player.close)
@@ -191,10 +183,7 @@ end)
         with self.assertRaisesRegex(RuntimeError, 'YouTube requested account access'):
             native.wait_for_playback(player.process, player.root / 'ipc', time.monotonic() + 2)
 
-    @unittest.skipUnless(
-        os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv'),
-        'run make test-player for real mpv tests',
-    )
+    @player_tests()
     def test_custom_thumbnail_executable_reaches_mpv_without_splitting_the_path(self):
         path = '/opt/player, with spaces/mpv'
         with patch.object(native, 'executable', return_value=path):

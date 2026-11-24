@@ -42,17 +42,17 @@ Real player checks also need mpv 0.41+, FFmpeg, and OpenSSL. Install them on a t
 ```sh
 make check         # headless checks; no real mpv
 make test-player   # real mpv and native handoff checks
-make test-slow     # real mpv recovery deadline
-make audit
+make test-slow     # real mpv recovery deadline only
+make audit         # Python 3.11+ development environment
 ```
 
-- `make check` runs Ruff, ESLint, ShellCheck, Luacheck, formatting checks, syntax checks, dependency checks, and offline tests. Real mpv tests are marked as skipped. Missing headless tools, lint warnings, stale dependency pins, and test failures stop the check.
-- `make test-player` requires mpv 0.41+ and FFmpeg. It runs the real playback, native handoff, and proxy tests. CI runs both `make check` and `make test-player`. To include the right-click test with uosc, set `MPV_CONFIG_DIR` and `XDG_STATE_HOME` to test directories and run `scripts/install-mpv-ui.sh`. Set `FRAME_FERRY_UI_CONFIG` to that `MPV_CONFIG_DIR` when you run the tests.
-- `make test-slow` also tests the full recovery deadline with real mpv.
-- `make audit` contacts Python and npm advisory services for the locked development dependencies. Any reported vulnerability fails the check. Keep this network check separate from offline tests. External player tools and optional components are installed separately; setup and doctor check the required runtime tool versions.
+- `make check` runs Ruff, ESLint, ShellCheck, Luacheck, formatting checks, syntax checks, dependency checks, and offline tests. It does not run real mpv tests. Missing headless tools, lint warnings, stale dependency pins, and test failures stop the check.
+- `make test-player` runs the real playback, native handoff, and proxy tests. `make test-slow` runs only the full recovery deadline test. These targets need mpv 0.41+, FFmpeg, and OpenSSL.
+- `make test-ui` runs the right-click and thumbnail tests with the pinned uosc and thumbfast components. Set `MPV_CONFIG_DIR` and `XDG_STATE_HOME` to scratch directories and run `scripts/install-mpv-ui.sh`. Set `FRAME_FERRY_UI_CONFIG` to that `MPV_CONFIG_DIR` for `make test-ui`.
+- `make audit` contacts Python and npm advisory services for the locked development dependencies. Run `make dev-setup` with Python 3.11 or later before you run it. Any reported vulnerability fails the check. External player tools and optional components are installed separately; setup and doctor check the required runtime tool versions.
 - `make format` applies the project formatters and safe lint fixes. Review the diff before committing.
 
-CI checks Python 3.10 and 3.14. It runs the slow suite on 3.14 and audits both environments. Pull requests also receive a dependency review. GitHub Actions use commit pins; Dependabot checks for updates each week.
+CI runs `make check` and `make test-player` on Python 3.10 and 3.14. It runs `make test-slow`, `make test-ui`, and `make audit` on 3.14. Pull requests also receive a dependency review. GitHub Actions use commit pins; Dependabot checks for updates each week.
 
 Tests use loopback media and simulated providers, not YouTube. A split-stream fixture cuts video while audio continues and checks recovery and position. The suite also covers configuration bounds, installation safety, browser navigation, authentication opt-in, worker cleanup, and false recovery. GPU output is not measured.
 

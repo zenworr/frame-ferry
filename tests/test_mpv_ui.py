@@ -6,14 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from . import player_tests
 from .mpv_harness import Player
 from .ui_fixtures import patched_thumbfast
 
 
-@unittest.skipUnless(
-    os.environ.get('FRAME_FERRY_PLAYER_TESTS') == '1' and shutil.which('mpv'),
-    'run make test-player for real mpv tests',
-)
+@player_tests('ui')
 class ThumbfastTests(unittest.TestCase):
     def test_preview_accepts_default_headers_but_not_special_formats(self):
         for include_preview in (True, False):
