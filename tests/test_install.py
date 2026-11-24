@@ -1,9 +1,12 @@
+import io
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -183,6 +186,15 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         self.assertTrue(local.exists())
         self.assertFalse((self.data / 'frameferry/bin/frameferry-native').exists())
 
+    def test_uninstall_keeps_a_user_symlink_even_if_its_contents_match(self):
+        self.assertEqual(self.install().returncode, 0)
+        target = self.player / 'mpv.conf'
+        custom = self.player / 'custom.conf'
+        target.rename(custom)
+        target.symlink_to(custom.name)
+        self.assertEqual(self.install('install.sh', '--uninstall').returncode, 0)
+        self.assertEqual(target.readlink(), Path(custom.name))
+
     def test_uninstall_restores_original_files(self):
         target = self.player / 'mpv.conf'
         target.parent.mkdir(parents=True)
@@ -190,6 +202,87 @@ Path(sys.argv[sys.argv.index('-o')+1]).write_text('fixture: '+url+'\\n')
         self.assertEqual(self.install().returncode, 0)
         self.assertEqual(self.install('install.sh', '--uninstall').returncode, 0)
         self.assertEqual(target.read_text(), 'original')
+
+    def install_over_original(self):
+        target = self.player / 'mpv.conf'
+        target.parent.mkdir(parents=True)
+        target.write_text('original')
+        self.assertEqual(self.install().returncode, 0)
+        ledger = self.state / 'frameferry/installation.json'
+        record = json.loads(ledger.read_text())[str(target)]
+        return target, ledger, record
+
+    def uninstall_in_process(self):
+        script = ROOT / 'scripts/setup-frameferry'
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, self.env, clear=True),
+            patch.object(sys, 'argv', [str(script), '--uninstall']),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(stderr),
+        ):
+            return runpy.run_path(str(script))['main'](), stderr.getvalue()
+
+    def assert_restore_failed(self, target, ledger, record, status, stderr):
+        self.assertNotEqual(status, 0)
+        self.assertIn(f'Could not restore {target} from {record["backup"]}', stderr)
+        self.assertIn('--uninstall again', stderr)
+        self.assertEqual(target.read_bytes(), (ROOT / 'config/mpv/mpv.conf').read_bytes())
+        self.assertEqual(json.loads(ledger.read_text()), {str(target): record})
+
+    def test_uninstall_keeps_target_and_record_until_missing_backup_returns(self):
+        target, ledger, record = self.install_over_original()
+        backup = Path(record['backup'])
+        relocated = backup.rename(self.home / 'relocated')
+
+        result = self.install('install.sh', '--uninstall')
+        self.assert_restore_failed(target, ledger, record, result.returncode, result.stderr.decode())
+
+        relocated.rename(backup)
+        self.assertEqual(self.install('install.sh', '--uninstall').returncode, 0)
+        self.assertEqual(target.read_text(), 'original')
+        self.assertEqual(json.loads(ledger.read_text()), {})
+
+    def test_uninstall_keeps_target_and_record_if_backup_cannot_be_read(self):
+        target, ledger, record = self.install_over_original()
+        before = set(self.player.iterdir())
+        with patch('shutil.copyfile', side_effect=PermissionError('Permission denied')):
+            status, stderr = self.uninstall_in_process()
+        self.assert_restore_failed(target, ledger, record, status, stderr)
+        self.assertIn('Permission denied', stderr)
+        self.assertFalse(set(self.player.iterdir()) - before)
+
+    def test_uninstall_restores_original_when_the_managed_file_is_missing(self):
+        target, ledger, _ = self.install_over_original()
+        target.unlink()
+        self.assertEqual(self.install('install.sh', '--uninstall').returncode, 0)
+        self.assertEqual(target.read_text(), 'original')
+        self.assertEqual(json.loads(ledger.read_text()), {})
+
+    def test_uninstall_retry_does_not_replace_restored_files_after_interruption(self):
+        target = self.player / 'mpv.conf'
+        link = self.player / 'input.conf'
+        target.parent.mkdir(parents=True)
+        target.write_bytes((ROOT / 'config/mpv/mpv.conf').read_bytes())
+        target.chmod(0o600)
+        link.symlink_to('missing.conf')
+        self.assertEqual(self.install().returncode, 0)
+        ledger = self.state / 'frameferry/installation.json'
+        previous = ledger.read_bytes()
+
+        with (
+            patch('frameferry_install.atomic_write', side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.uninstall_in_process()
+        self.assertEqual(ledger.read_bytes(), previous)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(link.readlink(), Path('missing.conf'))
+        inodes = [path.lstat().st_ino for path in (target, link)]
+
+        self.assertEqual(self.install('install.sh', '--uninstall').returncode, 0)
+        self.assertEqual([path.lstat().st_ino for path in (target, link)], inodes)
+        self.assertEqual(json.loads(ledger.read_text()), {})
 
     def test_uninstall_restores_relative_and_broken_symlinks(self):
         self.player.mkdir(parents=True)
