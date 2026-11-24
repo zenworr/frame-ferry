@@ -298,7 +298,7 @@ for (const reset of [
   pageVideo.paused = false;
   assert.ok(captureVideo(tabUrl, 'test'));
   reset();
-  await finishPause(tabUrl, 'test', true);
+  assert.equal(await finishPause(tabUrl, 'test', true), false, 'rollback reported playback after a source reset');
   assert.equal(resumed, 3, 'rollback resumed a reused video element');
 }
 pageVideo.paused = false;
@@ -417,6 +417,30 @@ assert.equal(captureVideo().position, 40.625);
 document.querySelectorAll = () => [video(150, 30, {paused: true}), video(100, 45)];
 assert.equal(captureVideo(tabUrl, 'priority').captured.position, 45, 'pausing changed which video was selected');
 await finishPause(tabUrl, 'priority', false);
+const stream = {};
+for (const [source, replacement, canResume] of [
+  [stream, stream, true],
+  [stream, {}, false],
+  [null, null, false],
+]) {
+  let plays = 0;
+  const heldVideo = video(100, 20, {
+    currentSrc: '',
+    srcObject: source,
+    isConnected: true,
+    async play() {
+      plays++;
+      this.paused = false;
+    },
+  });
+  document.querySelectorAll = () => [heldVideo];
+  assert.ok(captureVideo(tabUrl, 'source'));
+  assert.equal(heldVideo.paused, true);
+  heldVideo.srcObject = replacement;
+  assert.equal(await finishPause(tabUrl, 'source', true), canResume, 'rollback misreported playback');
+  assert.equal(plays, Number(canResume), 'rollback did not respect the paused media source');
+  assert.equal(heldVideo.paused, !canResume);
+}
 let layoutReads = 0;
 const candidates = Array.from({length: 100}, (_, i) =>
   video(i + 1, i, {
