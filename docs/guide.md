@@ -33,15 +33,27 @@ Frame Ferry uses its own mpv configuration. Normal `mpv URL` commands still use 
 
 Software decoding is the default. If playback drops frames, use `Ctrl+h` to compare hardware decoding. HDR output depends on your driver, display, and compositor.
 
-For eligible recorded YouTube streams, [`http_chunk_size`](../README.md#frame-ferry-configuration) limits HTTP range requests to 1 MiB by default. This works with mpv's curl backend (mpv 0.42+) or with FFmpeg 9+ when mpv does not use curl. Set `0` to leave mpv's HTTP settings unchanged.
+For eligible recorded YouTube streams, [`http_chunk_size`](../README.md#frame-ferry-configuration) sets the HTTP range request size to 1 MiB by default. Frame Ferry sets it on mpv's curl backend when enabled (mpv 0.42+). Otherwise it sets it on mpv's FFmpeg transport (`lavf`) with FFmpeg 9 or later. Explicit mpv transport settings take priority; Frame Ferry also keeps limits set by mpv from provider data. Set `0` to let mpv handle request sizes.
+
+## Timeouts, logs, and proxy
+
+`startup_timeout` limits the native helper, not the browser. A value above about five minutes can exceed the browser's limit for a single native messaging request. Keep the default unless you need more time for startup.
+
+`log_retention` is a target, not a hard limit. At startup, Frame Ferry removes excess old logs but keeps recent logs that could belong to a handoff still in progress. A later launch can remove those logs when they are old enough.
+
+An empty `proxy` uses a direct connection. A configured HTTP proxy applies to extraction and media playback. Frame Ferry ignores inherited proxy variables, including `no_proxy`. HTTPS video needs an HTTP proxy that supports CONNECT. HTTPS and SOCKS proxy URLs are not supported. Frame Ferry passes configured credentials to yt-dlp in its environment, not on its command line.
 
 ## Position and quality
 
-Continue reads the main-page video's position when clicked. It does not read positions from child frames or support live/DVR position transfer. If no position is available, playback uses the URL or saved history. Start from the beginning explicitly requests zero.
+Continue reads the main-page video's position. It does not read positions from child frames. If no position is available, playback uses the URL or saved history. Start from the beginning requests zero. Live/DVR positions do not transfer reliably: the browser can report a position in its DVR window that does not match the timeline in mpv.
 
-For YouTube, a handoff timestamp overrides saved history. Retry keeps the current position. By default, Frame Ferry pauses accessible browser videos at handoff start and reads the main video's paused position. If mpv startup fails, Frame Ferry tries to resume the same videos on the original page. If the panel cannot confirm that they resumed, check the tab. Turn off browser pausing to keep watching during startup; in that mode, the mpv position may be behind. Frames that cannot verify the original page stay playing. The **Continue in browser** control opens the saved position and closes mpv after the browser-open command succeeds. If you use that control during startup, Frame Ferry leaves the source videos paused.
+By default, Frame Ferry pauses accessible videos at handoff start and then reads the main video's position. It does not pause frames that cannot verify the original page. If startup fails, Frame Ferry tries to resume only videos it paused on the original page with unchanged media sources. If the panel cannot confirm that playback resumed, check the tab. Turn off browser pausing to keep watching during startup; mpv can then start behind the browser position.
+
+The **Continue in browser** control opens the YouTube URL with the current or last known position, if available. mpv closes if the browser-open command succeeds. If the command fails, mpv stays open and shows an error. If you use the control during startup, the panel reports the request, not its success, and does not resume the source videos.
 
 If the panel reports an interrupted handoff, check both the browser and mpv. The panel will not start another automatic handoff until you make a manual request.
+
+For YouTube, a handoff timestamp overrides saved history. Retry keeps the current position. When mpv saves the position on exit, each distinct URL can create a file in `watch_later` in Frame Ferry's player directory. Fractional timestamps can therefore create several entries for one video. Frame Ferry keeps these files as user history. `log_retention` does not remove them.
 
 Changing the saved default resolution also updates the current panel's resolution unless you have selected a different per-launch limit.
 
@@ -53,11 +65,11 @@ Selected quality → additional access methods → earlier usable stream
                                              → error screen
 ```
 
-Recovery has a 30-second default limit; see [Frame Ferry configuration](../README.md#frame-ferry-configuration) to change it. Account access and token support require setup below; unavailable routes are skipped or fail quickly. Provider restrictions can still prevent playback.
+Recovery has a 30-second default limit and reserves 7 seconds for the fresh fallback. A replay of an earlier usable stream has a short time limit and is skipped if it would use the fallback reserve. Changing [`recovery_timeout`](../README.md#frame-ferry-configuration) scales the route budgets and reserve. Recovery skips the signed-in route if browser cookies are not configured or the first route already used them. Account access and token support require setup below. Provider restrictions can still prevent playback.
 
-During recorded YouTube playback, recovery starts automatically after the configured `stall_timeout` (10 seconds by default) of continuous buffering, or when the video stream stops advancing for that duration while audio continues. Pausing, seeking, or resumed playback cancels the timer. Recovery keeps your position and tries the remaining access methods before lowering quality. If the fallback also stalls, recovery stops at the error screen rather than repeating indefinitely. No shortcut is required; `Alt+q` remains an optional way to go directly to the fast fallback.
+During recorded YouTube playback, recovery starts after `stall_timeout` (10 seconds by default) of continuous buffering. It also starts if the video stream does not advance for that long while the audio position keeps advancing ahead of it. A fixed difference between audio and video positions does not trigger recovery on its own. Pausing, seeking, or resumed playback cancels the timer. Recovery keeps your position and tries the remaining access methods before lowering quality. If the fallback also stalls, recovery stops at the error screen. Use `Alt+q` to select the fast fallback early.
 
-Timeline previews do not pass browser cookies or extractor headers to the preview player. If no suitable low-resolution stream is available, the preview player tries the active stream. Some streams may play without previews.
+Timeline previews do not pass browser cookies or extractor headers to the preview player. Frame Ferry selects a low-resolution video only if it does not need special request headers or cookies. If no suitable stream is available, the preview player tries the active stream. Some streams may play without previews.
 
 ## Account access and updates
 
@@ -88,11 +100,11 @@ The provider runs on demand, with no persistent server. It is installed under `~
 - **Playback fails:** the error message identifies the player log. Check current yt-dlp support and account requirements. Browser playback does not prove extraction will work.
 - **Shortcut does nothing:** configure it on the browser's extension-shortcuts page.
 
-Run `python3 scripts/doctor --browser helium`, with your browser selected, to check installed files and versions. It checks that managed recovery scripts and the patched thumbfast file match this checkout. It also checks that the required uosc and SponsorBlock files are present and nonempty. It does not test provider access or GPU output. Review logs for signed URLs and sensitive data before sharing them.
+Run `python3 scripts/doctor --browser helium`, with your browser selected, to check installed files and versions. It compares the installed thumbfast checksum with the expected patched file. If they do not match, rerun `scripts/install-mpv-ui.sh`. It also checks the managed recovery scripts and that the required uosc and SponsorBlock files are present and nonempty. It does not test provider access or GPU output. Review logs for signed URLs and sensitive data before sharing them.
 
 ## Remove or restore
 
-Run `./scripts/install.sh --uninstall`, then remove Frame Ferry from the browser. Uninstall restores saved original files and keeps user edits.
+Run `./scripts/install.sh --uninstall`, then remove Frame Ferry from the browser. Uninstall keeps user edits. When it restores an original file, it prepares a copy of the backup before it replaces the managed file. If a backup is missing or the restore fails, correct the reported problem and run uninstall again. Do not remove the installation records or backups before the restore succeeds.
 
 Downloaded components, logs, history, screenshots, and backups are retained. To remove them, first save anything you want to keep, then delete Frame Ferry's own config/data/state directories listed above. Do not delete the normal mpv directory.
 

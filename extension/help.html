@@ -19,14 +19,18 @@
     </p>
     <h2>Playback</h2>
     <p>
-      Continue reads the main video's position when clicked. If it cannot read a position, playback uses the URL or
-      saved history. Play from the beginning requests zero. Live/DVR position transfer is not supported.
+      Continue reads the main video's position. If it cannot read a position, playback uses the URL or saved history.
+      Play from the beginning requests zero. Live/DVR positions do not transfer reliably.
     </p>
     <p>
-      By default, Frame Ferry pauses accessible browser videos at handoff start and reads the main video's paused
-      position. If mpv startup fails, Frame Ferry tries to resume the same videos on the original page. If the panel
-      cannot confirm that they resumed, check the tab. Turn pausing off to keep watching during startup; the mpv
-      position may then be behind. The resolution setting is a limit; mpv shows the actual stream resolution.
+      By default, Frame Ferry pauses accessible browser videos before it reads the position. If mpv fails to start,
+      Frame Ferry tries to resume only videos it paused on the original page with unchanged media sources. If the panel
+      cannot confirm that playback resumed, check the tab. Turn pausing off to keep watching during startup; the mpv
+      position can then be behind. The resolution setting is a limit; mpv shows the actual stream resolution.
+    </p>
+    <p>
+      If you request a return to the browser while mpv starts, the panel reports the request and does not resume the
+      source videos. If the panel reports an interrupted handoff, check both mpv and the browser before you try again.
     </p>
     <h2>Privacy</h2>
     <p>

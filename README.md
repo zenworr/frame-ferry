@@ -4,7 +4,7 @@
 
 **Send browser videos to mpv. Keep your place.**
 
-Continue from the current position, when available, or start over. Choose a resolution limit and fullscreen playback. By default, Frame Ferry pauses accessible browser videos while mpv starts, so the saved position does not fall behind. If mpv fails, it resumes the videos it paused. Turn browser pausing off in the extension settings if you prefer to keep watching during startup.
+Continue from the current position, when available, or start over. Choose a resolution limit and fullscreen playback. By default, Frame Ferry pauses accessible browser videos before it reads the position. If mpv fails to start, it tries to resume only the unchanged videos it paused. Turn browser pausing off to keep watching during startup.
 
 Frame Ferry includes timeline previews, SponsorBlock controls, and YouTube quality recovery. It uses a separate mpv configuration, so your normal player settings stay unchanged.
 
@@ -16,7 +16,7 @@ Tested on **Linux x86-64 with Helium AppImage**. The installer also has registra
 
 Flatpak/Snap browsers may work with additional host integration, but this installer does not configure or test it. Firefox, Windows, and macOS are not supported.
 
-Install **mpv 0.41+**, **yt-dlp 2026.08+**, **Python 3.10+**, **Deno 2+**, Git, Bash, curl, patch, and diffutils. Then:
+Install **mpv 0.41+**, **yt-dlp 2026.08+**, **Python 3.10+**, **Deno 2+**, Git, Bash, curl, patch, diffutils (`cmp`), and coreutils (`sha256sum`). Then:
 
 ```sh
 git clone https://github.com/zenworr/frame-ferry.git
@@ -41,12 +41,12 @@ Replace `helium` with `chromium`, `chrome`, or `brave` as needed.
 | Right-click | Pause / resume |
 | `F2` | Change the resolution limit |
 | `Ctrl+r` | Retry YouTube playback at the current position |
-| `Ctrl+b` | Open YouTube in the browser, then close mpv |
-| `Alt+q` | Use the fast, lower-quality YouTube fallback |
+| `Ctrl+b` | Open YouTube in the browser; close mpv if the open command succeeds |
+| `Alt+q` | Switch to the fast, lower-quality YouTube fallback |
 | `Alt+s` | Toggle sponsor skipping |
 | `Ctrl+h` | Change hardware decoding mode |
 
-A 4K limit is not a guarantee of 4K playback. YouTube recovery tries the selected quality before a reduced-quality fallback. Provider restrictions can still prevent playback. Live/DVR position transfer is not supported.
+A 4K limit is not a guarantee of 4K playback. YouTube recovery tries the selected quality before a reduced-quality fallback. Provider restrictions can still prevent playback. Live/DVR positions do not transfer reliably.
 
 ## Frame Ferry configuration
 
@@ -68,11 +68,11 @@ The installer creates `~/.config/frameferry/config.json` (under `$XDG_CONFIG_HOM
 ```
 
 - **Executables:** empty values search `PATH`, then `~/.local/bin`. Set absolute executable paths for custom installations. You can create this file before installation if the tools are not on `PATH`.
-- **Timeouts:** seconds. `recovery_timeout` sets the YouTube recovery budget (10–300) and scales its route and extraction timeouts. `startup_timeout` sets how long the extension waits for playback (maximum 600); it must be at least 8 seconds longer than recovery.
+- **Timeouts:** `recovery_timeout` sets the YouTube recovery budget (10–300 seconds). `startup_timeout` sets the native helper's startup limit (up to 600 seconds and at least 8 seconds more than recovery). The browser can time out first.
 - **Stall recovery:** `stall_timeout` is the continuous stall duration before automatic recovery (3–120 seconds).
-- **HTTP requests:** `http_chunk_size` limits the size of HTTP requests for eligible recorded YouTube streams (65,536–8,388,608 bytes). It applies to mpv's curl backend (mpv 0.42+) or to FFmpeg 9+ when mpv does not use curl. Explicit mpv options and provider limits take priority. Set `0` to leave mpv's HTTP settings unchanged.
-- **Logs and updates:** `log_retention` sets a target of 1–1,000 player logs. Launches keep recent logs that can belong to a player that is still starting. A later launch removes excess old logs. `update_interval_hours` sets 1–168 hours between update attempts, only when automatic yt-dlp updates are enabled.
-- **Proxy:** empty means direct access, ignoring inherited proxy environment variables. Set an HTTP proxy such as `http://127.0.0.1:8080` for extraction and media playback. HTTPS video requires CONNECT support. SOCKS and HTTPS proxy addresses are not supported. Inherited `no_proxy` rules are ignored so extraction and playback use the same route.
+- **HTTP requests:** `http_chunk_size` sets the range request size for eligible recorded YouTube streams (65,536–8,388,608 bytes). Set `0` to let mpv handle request sizes.
+- **Logs and updates:** `log_retention` sets the target log count (1–1,000). `update_interval_hours` sets 1–168 hours between attempts if automatic yt-dlp updates are on.
+- **Proxy:** empty means direct access. Set an HTTP proxy such as `http://127.0.0.1:8080` for extraction and playback. HTTPS video requires CONNECT support. See the [user guide](docs/guide.md#timeouts-logs-and-proxy) for details.
 
 Omitted settings use the defaults above. Invalid values and unknown keys are rejected with an error. Protocol limits and internal polling intervals are fixed safety constants, not user settings.
 
@@ -80,7 +80,7 @@ These settings stay in the local helper; the extension cannot supply executable 
 
 ## Update or remove
 
-To update, run `git pull`, rerun the three installer commands above, then **reload the extension**. There are no browser-store updates. The installer preserves local edits.
+To update, run `git pull`, rerun the three installer commands above, then **reload the extension**. There are no browser-store updates. The main installer preserves local configuration edits; the component installers back up files they replace.
 
 To remove:
 
