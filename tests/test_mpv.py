@@ -2,10 +2,12 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from .helpers import ROOT
 from .mpv_harness import URL, Player
@@ -80,6 +82,17 @@ class MpvTests(unittest.TestCase):
                 self.assertFalse(check_transport('--curl-enabled=no'))
 
     def test_youtube_curl_request_size_precedence(self):
+        listing = subprocess.run(
+            [shutil.which('mpv'), '--no-config', '--list-options'],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+        mpv_options = {line.split(maxsplit=1)[0] for line in listing.splitlines() if line.strip()}
+        if not {'--curl-enabled', '--curl-max-request-size'} <= mpv_options:
+            self.skipTest('This fixture requires the mpv curl backend')
+
         curl_size = 'options/curl-max-request-size'
         for provider, expected, options in (
             (262144, 262144, ()),
@@ -90,8 +103,6 @@ class MpvTests(unittest.TestCase):
             with self.subTest(provider=provider, options=options):
                 p = self.player({'primary': {'provider_chunk_size': provider}}, options=('--pause=yes', *options))
                 p.wait_loaded('primary')
-                if not p.get('options/curl-enabled'):
-                    self.skipTest('This fixture requires the mpv curl backend')
                 self.assertEqual(p.get(curl_size), expected)
                 first_range, _port = p.requests[0]
                 self.assertEqual(first_range, 'bytes=0-' + (str(expected - 1) if expected else ''))
@@ -484,3 +495,20 @@ class MpvTests(unittest.TestCase):
                 self.assertEqual(p.get('playlist-count'), 1)
                 self.assertEqual((p.root / 'calls').read_text().splitlines(), expected)
         self.assertIn('Trying the earlier stream', cases[1][0].log.read_text())
+
+
+class MpvCompatibilityTests(unittest.TestCase):
+    def test_curl_precedence_skips_before_launch_without_curl(self):
+        case = MpvTests('test_youtube_curl_request_size_precedence')
+        probe = ['mpv', '--no-config', '--list-options']
+        listing = subprocess.CompletedProcess(probe, 0, stdout=' --network-timeout   Float\n')
+        with (
+            patch.object(shutil, 'which', return_value='mpv'),
+            patch.object(subprocess, 'run', return_value=listing) as run,
+            patch.object(case, 'player') as player,
+        ):
+            player.return_value.get.return_value = None
+            with self.assertRaisesRegex(unittest.SkipTest, 'requires the mpv curl backend'):
+                case.test_youtube_curl_request_size_precedence()
+        player.assert_not_called()
+        run.assert_called_once()
