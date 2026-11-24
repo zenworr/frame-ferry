@@ -70,7 +70,7 @@ The installer creates `~/.config/frameferry/config.json` (under `$XDG_CONFIG_HOM
 - **Executables:** empty values search `PATH`, then `~/.local/bin`. Set absolute executable paths for custom installations. You can create this file before installation if the tools are not on `PATH`.
 - **Timeouts:** seconds. `recovery_timeout` sets the YouTube recovery budget (10–300) and scales its route and extraction timeouts. `startup_timeout` sets how long the extension waits for playback (maximum 600); it must be at least 8 seconds longer than recovery.
 - **Stall recovery:** `stall_timeout` is the continuous stall duration before automatic recovery (3–120 seconds).
-- **HTTP requests:** `http_chunk_size` sets the request size for eligible YouTube VOD streams on FFmpeg 9+ (65,536–8,388,608 bytes). Set `0` to use mpv's normal HTTP behavior. Explicit mpv transport options take priority.
+- **HTTP requests:** `http_chunk_size` limits the size of HTTP requests for eligible recorded YouTube streams (65,536–8,388,608 bytes). It applies to mpv's curl backend (mpv 0.42+) or to FFmpeg 9+ when mpv does not use curl. Explicit mpv options and provider limits take priority. Set `0` to leave mpv's HTTP settings unchanged.
 - **Logs and updates:** `log_retention` keeps 1–1,000 player logs. `update_interval_hours` sets 1–168 hours between update attempts, only when automatic yt-dlp updates are enabled.
 - **Proxy:** empty means direct access, ignoring inherited proxy environment variables. Set an HTTP proxy such as `http://127.0.0.1:8080` for extraction and media playback. HTTPS video requires CONNECT support. SOCKS and HTTPS proxy addresses are not supported. Inherited `no_proxy` rules are ignored so extraction and playback use the same route.
 
