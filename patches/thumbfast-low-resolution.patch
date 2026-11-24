@@ -9,7 +9,38 @@
 -        vf = vf.."scale=w="..effective_w..":h="..effective_h..par..",pad=w="..effective_w..":h="..effective_h..":x=-1:y=-1,format=bgra"
 +        vf = vf.."scale=w="..effective_w..":h="..effective_h..par..",format=bgra,pad=w="..effective_w..":h="..effective_h..":x=-1:y=-1"
      end
-@@ -450,8 +451,32 @@
+@@ -433,7 +434,30 @@
+     os.remove(options.thumbnail..".bgra")
+ end
+
++-- yt-dlp adds these defaults even when a stream needs no special headers.
++local preview_default_headers = {
++    ["accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
++    ["accept-language"] = "en-us,en;q=0.5",
++    ["sec-fetch-mode"] = "navigate",
++}
++local preview_default_agent = "^Mozilla/5%.0 %(Windows NT 10%.0; Win64; x64%) AppleWebKit/537%.36 "
++    .. "%(KHTML, like Gecko%) Chrome/%d+%.0%.0%.0 Safari/537%.36$"
++
++local function preview_needs_no_request_context(info)
++    if info.cookies ~= nil and info.cookies ~= "" then return false end
++    local headers = info.http_headers
++    if headers == nil then return true end
++    if type(headers) ~= "table" then return false end
++    for name, value in pairs(headers) do
++        if type(name) ~= "string" or type(value) ~= "string" then return false end
++        name = name:lower()
++        if preview_default_headers[name] ~= value
++            and not (name == "user-agent" and value:match(preview_default_agent)) then return false end
++    end
++    return true
++end
++
+ local activity_timer
+
+ local function spawn(time)
+     if disabled then return end
+@@ -450,8 +474,29 @@
  
      local open_filename = properties["stream-open-filename"]
      local ytdl = open_filename and properties["demuxer-via-network"] and path ~= open_filename
@@ -20,18 +51,15 @@
 +        local result = mp.get_property_native("user-data/mpv/ytdl/json-subprocess-result")
 +        local data = result and mp.utils.parse_json(result.stdout or "")
 +        if data and data.extractor_key == "Youtube" and not data.is_live
-+            and (not data.cookies or data.cookies == "")
++            and preview_needs_no_request_context(data)
 +            and #mp.get_property_native("vf", {}) == 0
 +            and mp.get_property("video-crop", "") == "" then
 +            local height = 0
 +            local protocol = ((data.requested_formats or {})[1] or data).protocol
 +            for _, format in ipairs(data.formats or {}) do
-+                -- The isolated player does not use the extractor's request context.
-+                local headers = format.http_headers
 +                if format.protocol == protocol and format.url
 +                    and type(format.vcodec) == "string" and format.vcodec ~= "" and format.vcodec ~= "none"
-+                    and (headers == nil or (type(headers) == "table" and next(headers) == nil))
-+                    and (not format.cookies or format.cookies == "")
++                    and preview_needs_no_request_context(format)
 +                    and (format.available_at or 0) <= os.time()
 +                    and format.dynamic_range == data.dynamic_range
 +                    and (format.height or 0) > height and format.height <= 360 then
@@ -42,7 +70,7 @@
      end
  
      remove_thumbnail_files()
-@@ -462,7 +487,7 @@
+@@ -462,7 +507,7 @@
      local args = {
          mpv_path, "--no-config", "--msg-level=all=no", "--idle", "--pause", "--keep-open=always", "--really-quiet", "--no-terminal",
          "--load-scripts=no", "--osc=no", "--ytdl=no", "--load-stats-overlay=no", "--load-osd-console=no", "--load-auto-profiles=no",
