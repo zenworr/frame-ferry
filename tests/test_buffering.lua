@@ -131,11 +131,37 @@ local function frozen_video()
     return r
 end
 q = frozen_video()
-q.tick(10)
+q.tick(20)
+assert(#q.commands == 0, "a static audio offset triggered video recovery")
+for position = 61, 70 do
+    q.properties["audio-pts"] = position
+    q.tick(1)
+end
+assert(#q.commands == 0, "video recovery started before ten seconds of audio progress")
+q.properties["audio-pts"] = 71
+q.observe("time-pos", 71)
+q.tick(1)
 assert(#q.commands == 1, "audio-only progress hid a failed video stream")
 q.recover()
 assert(q.properties["user-data/youtube-quality/route"] == "authenticated")
-assert(q.properties["file-local-options/start"] == "60")
+assert(q.properties["file-local-options/start"] == "71")
+
+q = frozen_video()
+for position = 61, 69 do
+    q.properties["audio-pts"] = position
+    q.tick(1)
+end
+q.observe("seeking", true)
+q.properties["audio-pts"] = 50
+q.observe("seeking", false)
+for position = 51, 60 do
+    q.properties["audio-pts"] = position
+    q.tick(1)
+end
+assert(#q.commands == 0, "backward seek kept old audio progress")
+q.properties["audio-pts"] = 61
+q.tick(1)
+assert(#q.commands == 1, "backward seek prevented recovery after new audio progress")
 for _, case in ipairs({
     { "current-tracks/video/id", false },
     { "current-tracks/video/image", true },
