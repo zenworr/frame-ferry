@@ -35,7 +35,7 @@ export function captureVideo(expectedPage, token) {
     window.__frameFerryPause = {token, playing, release: () => playing.forEach((entry) => entry.release())};
     for (const element of videos) {
       if (element.paused) continue;
-      const entry = {element, source: element.currentSrc, valid: true, release};
+      const entry = {element, source: element.srcObject ?? element.currentSrc, valid: true, release};
       function release() {
         element.removeEventListener('emptied', invalidate);
         element.removeEventListener('loadstart', invalidate);
@@ -67,16 +67,14 @@ export async function finishPause(expectedPage, token, resume) {
   } catch {
     return false;
   }
-  const videos = held.playing.filter(
-    ({element, source, valid}) =>
-      valid &&
-      source &&
-      source === element.currentSrc &&
-      element.readyState > 0 &&
-      element.isConnected &&
-      element.paused &&
-      !element.ended,
+  const results = await Promise.allSettled(
+    held.playing.map(async ({element, source, valid}) => {
+      if (!valid || !source || source !== (element.srcObject ?? element.currentSrc) || !element.isConnected)
+        return false;
+      if (element.ended || element.readyState <= 0) return false;
+      if (element.paused) await element.play();
+      return true;
+    }),
   );
-  const results = await Promise.allSettled(videos.map(async ({element}) => element.play()));
-  return results.every((result) => result.status === 'fulfilled');
+  return results.every((result) => result.status === 'fulfilled' && result.value);
 }
