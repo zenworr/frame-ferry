@@ -184,7 +184,21 @@ class WrapperConfigTests(ExtractorFixture):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(values))
 
+    def record_proxy_state(self):
+        with self.fake.open('a') as extractor:
+            extractor.write(
+                """proxy_env = {key: value for key, value in os.environ.items()
+             if key.lower() in ('http_proxy', 'https_proxy', 'all_proxy', 'no_proxy')}
+worker_argv = Path(f'/proc/{os.getppid()}/cmdline').read_bytes().decode().split('\\0')
+(home / 'proxy-state').write_text(json.dumps([proxy_env, worker_argv]))
+"""
+            )
+        self.env.update({'HTTPS_PROXY': 'http://unwanted.invalid:8080', 'NO_PROXY': '*'})
+        return self.home / 'proxy-state'
+
     def test_custom_executables_deno_proxy_and_network_timeout(self):
+        state = self.record_proxy_state()
+        proxy = 'http://dummy-user:dummy-password@localhost:8080'
         custom = self.home / 'custom extractor'
         self.fake.rename(custom)
         self.settings(
@@ -193,21 +207,27 @@ class WrapperConfigTests(ExtractorFixture):
                 'deno': sys.executable,
                 'recovery_timeout': 60,
                 'startup_timeout': 68,
-                'proxy': 'http://localhost:8080',
+                'proxy': proxy,
             }
         )
         result = self.run_wrapper('-J', '--', 'https://youtube.com/watch?v=fixture')
         self.assertEqual(result.returncode, 0, result.stderr)
         args = self.calls()[0]
         self.assertIn('deno:' + sys.executable, args)
-        self.assertEqual(args[args.index('--proxy') + 1], 'http://localhost:8080')
         self.assertEqual(float(args[args.index('--socket-timeout') + 1]), 10)
+        proxy_env, worker_argv = json.loads(state.read_text())
+        self.assertIn('--extractor-worker', worker_argv)
+        for argv in (args, worker_argv):
+            self.assertNotIn('--proxy', argv)
+            self.assertNotIn('dummy-password', ' '.join(argv))
+        self.assertEqual(proxy_env, {'http_proxy': proxy, 'https_proxy': proxy})
 
     def test_no_proxy_is_explicit_and_invalid_config_stops_extraction(self):
-        self.env['HTTPS_PROXY'] = 'http://unwanted.invalid:8080'
+        state = self.record_proxy_state()
         self.assertEqual(self.run_wrapper('-J', '--', 'https://example.org/video').returncode, 0)
         args = self.calls()[0]
         self.assertEqual(args[args.index('--proxy') + 1], '')
+        self.assertEqual(json.loads(state.read_text())[0], {})
         self.settings({'proxy': 'socks5://user:secret@host'})
         result = self.run_wrapper('-J', '--', 'https://example.org/video')
         self.assertNotEqual(result.returncode, 0)

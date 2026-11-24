@@ -240,9 +240,10 @@ def main():
         '--no-js-runtimes',
         '--js-runtimes',
         f'deno:{deno}',
-        '--proxy',
-        config['proxy'],
     ]
+    # Use the environment so proxy credentials stay out of process arguments.
+    if not config['proxy']:
+        command += ['--proxy', '']
     if youtube and options.frameferry_update == 'yes':
         start_background_update(ytdlp)
 
