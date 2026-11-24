@@ -9,6 +9,9 @@ PYTHON_ENTRYPOINTS := scripts/frameferry-native scripts/setup-frameferry scripts
 # Network access is limited to these explicit setup and audit targets.
 dev-setup:
 	$(PYTHON) -m venv .venv
+	# The pip bundled with Python 3.10 cannot resolve all extras in hash mode.
+	@pip_requirement=$$(awk '/^pip==/,/[^\\]$$/' requirements-dev.txt) && test -n "$$pip_requirement" && \
+		printf '%s\n' "$$pip_requirement" | $(DEV_BIN)/python -m pip install --require-hashes --no-deps -r /dev/stdin
 	$(DEV_BIN)/python -m pip install --require-hashes -r requirements-dev.txt
 	npm ci --ignore-scripts
 
