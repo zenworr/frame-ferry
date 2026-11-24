@@ -161,7 +161,9 @@ class ConfigTests(unittest.TestCase):
         state = self.path.parent / 'state'
         state.mkdir()
         for index in range(4):
-            (state / f'player-old-{index}.log').touch()
+            log = state / f'player-old-{index}.log'
+            log.touch()
+            os.utime(log, (index, index))
         with (
             patch.object(native, 'CONFIG', self.path.parent),
             patch.object(native, 'STATE', self.path.parent / 'state'),

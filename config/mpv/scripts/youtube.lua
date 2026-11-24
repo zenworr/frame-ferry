@@ -4,7 +4,7 @@ local numeric_options = {
     stall_timeout = { default = 10, minimum = 3, maximum = 120 },
     http_chunk_size = { default = 1024 * 1024, minimum = 0, maximum = 8 * 1024 * 1024 },
 }
-local options = { cookies_browser = "", cookies_initial = false, auto_update = false }
+local options = { cookies_browser = "", cookies_initial = false, auto_update = false, browser_request_file = "" }
 for name, policy in pairs(numeric_options) do
     options[name] = policy.default
 end
@@ -580,6 +580,13 @@ mp.add_key_binding("Ctrl+b", "youtube-browser", function()
             end
             params[#params + 1] = "t=" .. math.floor(position)
             url = base .. "?" .. table.concat(params, "&")
+        end
+        -- mpv can exit before it publishes the browser slate or replies on IPC.
+        if options.browser_request_file ~= "" then
+            local request = io.open(options.browser_request_file, "w")
+            if request then
+                request:close()
+            end
         end
         if loaded then
             mp.set_property_bool("pause", true)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Frame Ferry protocol v1: a bounded request and a playback-ready response."""
+"""Frame Ferry protocol v1: a bounded request and a startup outcome."""
 
 import json
 import math
@@ -14,7 +14,14 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from frameferry_config import MIN_PRINTABLE_CODEPOINT, executable, load_config, proxy_environment, supported_executable
+from frameferry_config import (
+    MIN_PRINTABLE_CODEPOINT,
+    TIMEOUT_LIMITS,
+    executable,
+    load_config,
+    proxy_environment,
+    supported_executable,
+)
 
 CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'frameferry/mpv'
 STATE = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'frameferry'
@@ -28,6 +35,7 @@ IPC_CONNECT_TIMEOUT = 1
 IPC_CONNECT_INTERVAL = 0.05
 IPC_POLL_INTERVAL = 0.1
 PROCESS_STOP_TIMEOUT = 3
+BROWSER_REQUEST_FILE = 'browser-requested'
 
 
 def validate(message):
@@ -88,6 +96,7 @@ def command_for(message, ipc, config=None):
             for name in ('recovery_timeout', 'stall_timeout', 'http_chunk_size')
         ],
         f'--script-opts-append=thumbfast-mpv_path={mpv}',
+        f'--script-opts-append=youtube-browser_request_file={ipc.with_name(BROWSER_REQUEST_FILE)}',
     ]
     height = message['quality']
     if height:
@@ -114,9 +123,12 @@ def command_for(message, ipc, config=None):
 
 
 def wait_for_playback(process, path, deadline):
+    browser_request = path.with_name(BROWSER_REQUEST_FILE)
     with socket.socket(socket.AF_UNIX) as ipc:
         ipc.settimeout(IPC_CONNECT_TIMEOUT)
         while True:
+            if browser_request.exists():
+                return
             if process.poll() is not None:
                 raise RuntimeError('mpv exited before playback started. Check the player log.')
             if time.monotonic() >= deadline:
@@ -145,6 +157,8 @@ def wait_for_playback(process, path, deadline):
                         return event.get('data')
 
             while time.monotonic() < deadline:
+                if browser_request.exists():
+                    return
                 if property_value('user-data/youtube-quality/slate'):
                     reason = property_value('user-data/youtube-quality/error')
                     raise RuntimeError(
@@ -161,6 +175,21 @@ def wait_for_playback(process, path, deadline):
     raise TimeoutError('mpv did not become ready in time.')
 
 
+def prune_logs(retention):
+    # A pending host can still use the previous timeout after a configuration change.
+    cutoff = time.time() - TIMEOUT_LIMITS['startup_timeout'][1] - PROCESS_STOP_TIMEOUT
+    logs = []
+    for path in STATE.glob('player-*.log'):
+        try:
+            logs.append((path.stat().st_mtime, path))
+        except FileNotFoundError:
+            continue
+    logs.sort(reverse=True)
+    for mtime, path in logs[retention - 1 :]:
+        if mtime < cutoff:
+            path.unlink(missing_ok=True)
+
+
 def handle(message):
     message = validate(message)
     config = load_config()
@@ -172,10 +201,7 @@ def handle(message):
         return {'ok': True, 'message': 'Native host and player configuration found. Playback has not been tested.'}
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     STATE.chmod(0o700)
-    for old in sorted(STATE.glob('player-*.log'), key=lambda p: p.stat().st_mtime, reverse=True)[
-        config['log_retention'] - 1 :
-    ]:
-        old.unlink(missing_ok=True)
+    prune_logs(config['log_retention'])
     with tempfile.TemporaryDirectory(prefix='frameferry-', dir='/tmp') as temp:
         ipc = Path(temp) / 'ipc'
         command = command_for(message, ipc, config)
@@ -188,18 +214,22 @@ def handle(message):
                 start_new_session=True,
                 env=proxy_environment(config),
             )
+        browser_request = ipc.with_name(BROWSER_REQUEST_FILE)
         try:
             wait_for_playback(process, ipc, time.monotonic() + config['startup_timeout'])
         except Exception as error:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=PROCESS_STOP_TIMEOUT)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-            raise RuntimeError(f'{error}\nPlayer log: {output.name}') from None
-    return {'ok': True, 'message': 'mpv is playing.', 'pid': process.pid}
+            if not browser_request.exists():
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=PROCESS_STOP_TIMEOUT)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                raise RuntimeError(f'{error}\nPlayer log: {output.name}') from None
+        if browser_request.exists():
+            return {'ok': True, 'outcome': 'browser', 'message': 'Return to the browser was requested in mpv.'}
+    return {'ok': True, 'outcome': 'playing', 'message': 'mpv is playing.', 'pid': process.pid}
 
 
 def serve(incoming, outgoing):
