@@ -39,7 +39,9 @@ For eligible recorded YouTube streams, [`http_chunk_size`](../README.md#frame-fe
 
 Continue reads the main-page video's position when clicked. It does not read positions from child frames or support live/DVR position transfer. If no position is available, playback uses the URL or saved history. Start from the beginning explicitly requests zero.
 
-For YouTube, a handoff timestamp overrides saved history. Retry keeps the current position. By default, Frame Ferry pauses accessible browser videos at handoff start, keeping the captured position nearly in step with what you last saw. If mpv fails, it resumes only videos it paused on the original page. Turn off browser pausing to keep watching during startup; in that mode, the mpv position may be behind. Frames that cannot verify the original page stay playing. The **Continue in browser** control opens the saved position and closes mpv after the browser-open command succeeds.
+For YouTube, a handoff timestamp overrides saved history. Retry keeps the current position. By default, Frame Ferry pauses accessible browser videos at handoff start and reads the main video's paused position. If mpv startup fails, Frame Ferry tries to resume the same videos on the original page. If the panel cannot confirm that they resumed, check the tab. Turn off browser pausing to keep watching during startup; in that mode, the mpv position may be behind. Frames that cannot verify the original page stay playing. The **Continue in browser** control opens the saved position and closes mpv after the browser-open command succeeds. If you use that control during startup, Frame Ferry leaves the source videos paused.
+
+If the panel reports an interrupted handoff, check both the browser and mpv. The panel will not start another automatic handoff until you make a manual request.
 
 Changing the saved default resolution also updates the current panel's resolution unless you have selected a different per-launch limit.
 

@@ -13,14 +13,14 @@ tests/               Offline fixtures and regression tests
 ```
 
 ```text
-Browser action → capture and pause → native host → mpv → yt-dlp
-                                        ← playback confirmation
-Failure → resume videos paused on the original page
+Browser action → select video → pause if enabled → capture position → native host → mpv
+                   Playing or browser return requested ← keep the source videos paused
+                          Startup failure ← try to resume the same videos on the same page
 ```
 
 The extension is plain Manifest V3 JavaScript with no runtime npm dependencies or build step. Python runtime code uses only the standard library. Development dependencies stay outside the installed extension and native host.
 
-The native host accepts a fixed schema: URL, position, resolution limit, and fullscreen. It does not accept shell commands or arbitrary mpv arguments. It confirms playback through mpv IPC; the browser pauses before startup when that setting is enabled, and resumes its original playing videos if startup fails.
+The native host accepts a fixed schema: URL, position, resolution limit, and fullscreen. It does not accept shell commands or arbitrary mpv arguments. It uses mpv IPC to report playback, a request to return to the browser, or startup failure. The extension uses one operation to select, pause, and read the main video when pausing is enabled. Only a startup failure triggers a resume attempt. A worker restart does not retry a pending request or resume its videos because the result is unknown.
 
 YouTube recovery state is separate for each player. Retained metadata uses an unlinked file descriptor. Worker cleanup and descriptor access require Linux. Account access and background updates are local opt-ins.
 
@@ -79,9 +79,10 @@ Use the normal popup with a recorded video. Local HTTP fixtures must support byt
 - Continue from a known position; compare mpv's start position.
 - Start from zero despite saved history.
 - Change default and per-launch resolutions separately.
-- Confirm pausing before startup, resuming only previously playing videos on failure, and no pause when disabled.
-- Navigate during startup; the new page must stay playing.
-- Reopen the popup during a handoff and check the status and disabled buttons.
+- Confirm pausing before startup, resuming only previously playing videos on failure, and no pause when disabled. Check that a slow resume in a background tab does not lock the panel.
+- Navigate or change the video source during startup. Frame Ferry must not resume the new video.
+- Reopen the popup during a handoff and check the status and disabled buttons. After a worker restart with an unknown result, check that the panel allows a manual request but does not start one automatically.
+- Request a return to the browser during mpv startup. The panel must report the request and leave the source video paused.
 - Check restricted pages, unavailable positions, and embedded videos.
 
 Run provider and GPU tests separately. Report startup time, seeking, buffering, and dropped frames separately. Redact private data from logs.
